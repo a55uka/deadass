@@ -1,0 +1,6 @@
+"AddonInfo"
+{
+  addonTitle          "deadass companion bridge"
+  addonVersion        "0.1.0"
+  addonAuthor         "deadass"
+}

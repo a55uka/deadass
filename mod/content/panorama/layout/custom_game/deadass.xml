@@ -1,0 +1,11 @@
+<root>
+  <Panel id="DeadassBridge" class="deadass-hidden">
+    <Label id="DeadassStatus" text="deadass bridge loading" />
+  </Panel>
+  <scripts>
+    <include src="file://{resources}/scripts/custom_game/deadass.js" />
+  </scripts>
+  <styles>
+    <include src="file://{resources}/styles/custom_game/deadass.css" />
+  </styles>
+</root>
