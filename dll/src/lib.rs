@@ -8,4 +8,4 @@ pub use sender::EventSender;
 mod entry;
 
 #[cfg(windows)]
-pub use entry::DllEntry;
+pub use entry::spawn_poller;

@@ -1,52 +1,34 @@
-#[cfg(windows)]
-use windows_sys::Win32::Foundation::{BOOL, HMODULE, TRUE};
-#[cfg(windows)]
-use windows_sys::Win32::System::Threading::{CreateThread, THREAD_CREATION_FLAGS};
+use std::ffi::c_void;
 
 use crate::poller::{ScoreboardDelta, ScoreboardSnapshot};
 use crate::sender::EventSender;
 
-pub struct DllEntry;
+const PROCESS_ATTACH: u32 = 1;
+const TRUE: i32 = 1;
 
-impl DllEntry {
-    #[cfg(windows)]
-    pub unsafe fn attach() -> BOOL {
-        let mut _thread_id = 0u32;
-        CreateThread(
-            std::ptr::null(),
-            0,
-            Some(poll_thread),
-            std::ptr::null(),
-            THREAD_CREATION_FLAGS(0),
-            &mut _thread_id,
-        );
-        TRUE
-    }
+pub fn spawn_poller() {
+    std::thread::spawn(poll_loop);
 }
 
-#[cfg(windows)]
-unsafe extern "system" fn poll_thread(_parameter: *mut std::ffi::c_void) -> u32 {
+fn poll_loop() {
     let sender = EventSender::new(24680);
     let mut delta = ScoreboardDelta::new();
-    let mut last_snapshot = ScoreboardSnapshot::default();
+    let mut snapshot = ScoreboardSnapshot::default();
     loop {
-        let events = delta.diff(last_snapshot);
-        sender.push(&events);
-        windows_sys::Win32::System::Threading::Sleep(33);
-        let _ = &mut last_snapshot;
+        sender.push(&delta.diff(snapshot));
+        std::thread::sleep(std::time::Duration::from_millis(33));
+        let _ = &mut snapshot;
     }
 }
 
-#[cfg(windows)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn DllMain(
-    _module: HMODULE,
+    _module: *mut c_void,
     reason: u32,
-    _reserved: *mut std::ffi::c_void,
-) -> BOOL {
-    const PROCESS_ATTACH: u32 = 1;
+    _reserved: *mut c_void,
+) -> i32 {
     if reason == PROCESS_ATTACH {
-        return DllEntry::attach();
+        spawn_poller();
     }
     TRUE
 }
