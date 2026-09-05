@@ -22,6 +22,13 @@
   var creditedAssistPanels = [];
   var damageImpactPollCounter = 0;
   var DAMAGE_IMPACT_POLL_INTERVAL_POLLS = 3;
+  var lastKillEmitMs = 0;
+  var lastDeathEmitMs = 0;
+  var lastKillBannerKey = null;
+  var killBannerPollCounter = 0;
+  var KILL_BANNER_INTERVAL_POLLS = 3;
+  var KILL_BANNER_PATTERNS = [/first blood/i, /kill streak/i, /\bdouble kill\b/i, /\btriple kill\b/i, /multi.?kill/i, /killing spree/i, /rampage/i, /unstoppable/i];
+  var fallbackDead = false;
 
   function emit(eventName, fields) {
     var payload = {
@@ -45,6 +52,16 @@
     sequence++;
     fields.sequence = sequence;
     emit(eventName, fields);
+  }
+
+  function emitKill(fields) {
+    lastKillEmitMs = Date.now();
+    emitAction("kill", fields);
+  }
+
+  function emitDeath(fields) {
+    lastDeathEmitMs = Date.now();
+    emitAction("death", fields);
   }
 
   function isValidPanel(panel) {
@@ -379,10 +396,10 @@
     }
     if (lastKillStreakCount === null) {
       if (count >= 1) {
-        emitAction("kill", { detection: "kill_streak_counter_increment" });
+        emitKill({ detection: "kill_streak_counter_increment" });
       }
     } else if (count > lastKillStreakCount) {
-      emitAction("kill", { detection: "kill_streak_counter_increment" });
+      emitKill({ detection: "kill_streak_counter_increment" });
     }
     lastKillStreakCount = count;
   }
@@ -415,6 +432,74 @@
       }
       creditedAssistPanels.push(child);
       emitAction("assist", { detection: "damage_impact_assist_class" });
+    }
+  }
+
+  function collectLabelTexts(panel, out) {
+    if (!isValidPanel(panel)) {
+      return;
+    }
+    if (panelProperty(panel, "paneltype") === "Label"
+      && panelProperty(panel, "visible") !== false) {
+      var text = panelProperty(panel, "text");
+      if (typeof text === "string" && text !== "" && text.charAt(0) !== "{") {
+        out.push(text);
+      }
+    }
+    var children = panelChildren(panel);
+    for (var i = 0; i < children.length; i++) {
+      collectLabelTexts(children[i], out);
+    }
+  }
+
+  function killBannerKey(root) {
+    var texts = [];
+    collectLabelTexts(root, texts);
+    var hits = [];
+    for (var i = 0; i < texts.length; i++) {
+      for (var p = 0; p < KILL_BANNER_PATTERNS.length; p++) {
+        if (KILL_BANNER_PATTERNS[p].test(texts[i])) {
+          hits.push(texts[i]);
+          break;
+        }
+      }
+    }
+    hits.sort();
+    return hits.length > 0 ? hits.join("|") : null;
+  }
+
+  function pollKillBannerFallback(root) {
+    killBannerPollCounter++;
+    if (killBannerPollCounter < KILL_BANNER_INTERVAL_POLLS) {
+      return;
+    }
+    killBannerPollCounter = 0;
+    var key = killBannerKey(root);
+    var previous = lastKillBannerKey;
+    lastKillBannerKey = key;
+    if (key !== null && key !== previous && Date.now() - lastKillEmitMs > 1500) {
+      emitKill({ detection: "kill_banner_text" });
+    }
+  }
+
+  function pollRespawnTimerFallback(root) {
+    var texts = [];
+    collectLabelTexts(root, texts);
+    var timerDead = false;
+    for (var i = 0; i < texts.length; i++) {
+      if (/respawn/i.test(texts[i])) {
+        timerDead = true;
+        break;
+      }
+    }
+    if (timerDead === fallbackDead) {
+      return;
+    }
+    fallbackDead = timerDead;
+    if (timerDead && Date.now() - lastDeathEmitMs > 2000) {
+      emitDeath({ detection: "respawn_timer_label" });
+    } else if (!timerDead) {
+      emitAction("respawn", { detection: "respawn_timer_label" });
     }
   }
 
@@ -458,7 +543,7 @@
     } else if (isDead !== wasDead) {
       forceAbilityBaseline = true;
       if (isDead) {
-        emitAction("death", { detection: "top_bar_local_player_dead_class" });
+        emitDeath({ detection: "top_bar_local_player_dead_class" });
       } else {
         emitAction("respawn", { detection: "top_bar_local_player_dead_class" });
       }
@@ -466,7 +551,10 @@
     }
     pollAbilities(forceAbilityBaseline || isDead);
     pollOwnKillStreak(player, forceAbilityBaseline || baselineSettlePollsRemaining > 0);
-    pollDamageImpactAssists(highestContextAncestor());
+    var ancestor = highestContextAncestor();
+    pollDamageImpactAssists(ancestor);
+    pollKillBannerFallback(ancestor);
+    pollRespawnTimerFallback(ancestor);
     $.Schedule(POLL_INTERVAL_SECONDS, pollState);
   }
 
