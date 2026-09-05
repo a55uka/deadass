@@ -1,4 +1,4 @@
-use deadass_shared::{GameEvent, InputMode, TriggerKind};
+use deadass_shared::{GameEvent, InputMode, TriggerKind, now_ms};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{broadcast, mpsc};
 
@@ -89,13 +89,16 @@ impl EventDeduplicator {
     }
 
     pub fn should_emit(&mut self, event: GameEvent) -> bool {
-        let trigger = TriggerKind::from_event(event.kind);
+        self.should_emit_at(TriggerKind::from_event(event.kind), now_ms())
+    }
+
+    fn should_emit_at(&mut self, trigger: TriggerKind, now: u64) -> bool {
         self.recent
-            .retain(|(_, seen_at)| event.wall_time_ms.saturating_sub(*seen_at) <= self.window_ms);
+            .retain(|(_, seen_at)| now.saturating_sub(*seen_at) <= self.window_ms);
         if self.recent.iter().any(|(known, _)| *known == trigger) {
             return false;
         }
-        self.recent.push_back((trigger, event.wall_time_ms));
+        self.recent.push_back((trigger, now));
         if self.recent.len() > 64 {
             self.recent.pop_front();
         }
@@ -132,4 +135,36 @@ fn pending_triggers(events: &[GameEvent]) -> HashMap<TriggerKind, usize> {
             .or_insert(0) += 1;
     }
     counts
+}
+
+#[cfg(test)]
+mod deduplicator_collapses_arrival_bursts {
+    use super::*;
+    use deadass_shared::{EventKind, EventSource};
+
+    fn kill() -> GameEvent {
+        GameEvent::new(1, 0, EventSource::Mod, EventKind::Kill)
+    }
+
+    #[test]
+    fn immediate_repeat_is_dropped() {
+        let mut dedup = EventDeduplicator::new(200);
+        assert!(dedup.should_emit_at(TriggerKind::Kill, 1000));
+        assert!(!dedup.should_emit_at(TriggerKind::Kill, 1100));
+    }
+
+    #[test]
+    fn repeat_after_window_passes() {
+        let mut dedup = EventDeduplicator::new(200);
+        assert!(dedup.should_emit_at(TriggerKind::Kill, 1000));
+        assert!(dedup.should_emit_at(TriggerKind::Kill, 1300));
+    }
+
+    #[test]
+    fn stale_sender_timestamp_does_not_suppress() {
+        let mut dedup = EventDeduplicator::new(200);
+        assert!(dedup.should_emit(kill()));
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        assert!(dedup.should_emit(kill()));
+    }
 }
