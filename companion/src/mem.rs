@@ -1,7 +1,3 @@
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::fs::FileExt;
-
 #[derive(Debug, Clone)]
 pub struct MemoryRegion {
     pub start: u64,
@@ -9,6 +5,7 @@ pub struct MemoryRegion {
     pub pathname: Option<String>,
 }
 
+#[cfg(unix)]
 pub fn client_module_base(pid: u32, module: &str) -> Option<u64> {
     mapped_regions(pid)
         .into_iter()
@@ -22,6 +19,12 @@ pub fn client_module_base(pid: u32, module: &str) -> Option<u64> {
         .min()
 }
 
+#[cfg(not(unix))]
+pub fn client_module_base(_pid: u32, _module: &str) -> Option<u64> {
+    None
+}
+
+#[cfg(unix)]
 pub fn mapped_regions(pid: u32) -> Vec<MemoryRegion> {
     let Ok(maps) = std::fs::read_to_string(format!("/proc/{pid}/maps")) else {
         return Vec::new();
@@ -29,6 +32,12 @@ pub fn mapped_regions(pid: u32) -> Vec<MemoryRegion> {
     maps.lines().filter_map(parse_maps_line).collect()
 }
 
+#[cfg(not(unix))]
+pub fn mapped_regions(_pid: u32) -> Vec<MemoryRegion> {
+    Vec::new()
+}
+
+#[cfg(unix)]
 fn parse_maps_line(line: &str) -> Option<MemoryRegion> {
     let mut parts = line.split_whitespace();
     let range = parts.next()?;
@@ -46,9 +55,20 @@ fn parse_maps_line(line: &str) -> Option<MemoryRegion> {
     })
 }
 
+#[cfg(unix)]
 pub fn read_memory(pid: u32, address: u64, out: &mut [u8]) -> std::io::Result<()> {
+    use std::fs::File;
+    use std::os::unix::fs::FileExt;
     let file = File::open(format!("/proc/{pid}/mem"))?;
     file.read_exact_at(out, address)
+}
+
+#[cfg(not(unix))]
+pub fn read_memory(_pid: u32, _address: u64, _out: &mut [u8]) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "external memory reading is only supported on Linux",
+    ))
 }
 
 pub fn read_pointer_chain(pid: u32, base: u64, offsets: &[u64]) -> Option<u64> {
@@ -74,11 +94,4 @@ pub fn read_i32(pid: u32, address: u64) -> Option<i32> {
     let mut raw = [0u8; 4];
     read_memory(pid, address, &mut raw).ok()?;
     Some(i32::from_le_bytes(raw))
-}
-
-#[allow(dead_code)]
-fn seek_read(pid: u32, address: u64, out: &mut [u8]) -> std::io::Result<()> {
-    let mut file = File::open(format!("/proc/{pid}/mem"))?;
-    file.seek(SeekFrom::Start(address))?;
-    file.read_exact(out)
 }

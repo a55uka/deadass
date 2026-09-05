@@ -1,7 +1,9 @@
 (function () {
-  var COMPANION_URL = "http://127.0.0.1:24681/event";
+  var LOG_PREFIX = "[DEADASS]";
+  var MOD_VERSION = "0.1.0";
   var POLL_MS = 100;
   var sequence = 0;
+  var sessionId = Date.now().toString(36) + "-" + Math.floor(Math.random() * 0x1000000).toString(36);
 
   var previous = {
     kills: null,
@@ -10,10 +12,6 @@
     alive: null,
     ready: [null, null, null, null]
   };
-
-  function wallTimeMs() {
-    return Date.now();
-  }
 
   function localScoreboard() {
     var info = Game.GetLocalPlayerInfo();
@@ -37,19 +35,24 @@
     return Abilities.IsCooldownReady(ability);
   }
 
-  function emit(kind) {
+  function emit(event, fields) {
     sequence += 1;
     var payload = {
+      schema: 1,
+      event: event,
+      mod_version: MOD_VERSION,
+      session_id: sessionId,
       sequence: sequence,
-      wall_time_ms: wallTimeMs(),
-      source: "mod",
-      kind: kind
+      client_time_ms: Date.now()
     };
-    $.AsyncWebRequest(COMPANION_URL, {
-      type: "POST",
-      data: payload,
-      complete: function () {}
-    });
+    if (fields) {
+      for (var key in fields) {
+        if (Object.prototype.hasOwnProperty.call(fields, key)) {
+          payload[key] = fields[key];
+        }
+      }
+    }
+    $.Msg(LOG_PREFIX + JSON.stringify(payload));
   }
 
   function observeCounters(current) {
@@ -61,16 +64,16 @@
       return;
     }
     for (var i = previous.kills; i < current.kills; i++) {
-      emit({ type: "kill" });
+      emit("kill");
     }
     for (var j = previous.deaths; j < current.deaths; j++) {
-      emit({ type: "death" });
+      emit("death");
     }
     for (var k = previous.assists; k < current.assists; k++) {
-      emit({ type: "assist" });
+      emit("assist");
     }
     if (!previous.alive && current.alive) {
-      emit({ type: "respawn" });
+      emit("respawn");
     }
     previous.kills = current.kills;
     previous.deaths = current.deaths;
@@ -94,10 +97,10 @@
         continue;
       }
       if (!previous.ready[slot] && ready) {
-        emit({ type: "ability_ready", slot: slot });
+        emit("ability_ready", { ability_slot: slot });
       }
       if (previous.ready[slot] && !ready) {
-        emit({ type: "ability_used", slot: slot });
+        emit("ability_used", { ability_slot: slot });
       }
       previous.ready[slot] = ready;
     }
@@ -112,5 +115,6 @@
     $.Schedule(POLL_MS / 1000, tick);
   }
 
+  emit("hook_ready", { poll_interval_ms: POLL_MS });
   $.Schedule(2, tick);
 })();

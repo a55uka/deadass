@@ -1,5 +1,5 @@
 <root>
-  <Panel id="DeadassBridge" class="deadass-hidden">
+  <Panel class="deadass-hidden">
     <Label id="DeadassStatus" text="deadass bridge loading" />
   </Panel>
   <scripts>

@@ -1,5 +1,4 @@
-use deadass_shared::{EventKind, EventSource, GameEvent};
-use std::time::{SystemTime, UNIX_EPOCH};
+use deadass_shared::{EventKind, EventSource, GameEvent, now_ms};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScoreboardSnapshot {
@@ -26,7 +25,7 @@ impl ScoreboardDelta {
             self.previous = Some(current);
             return emitted;
         };
-        let now = wall_time_ms();
+        let now = now_ms();
         if current.kills > previous.kills {
             for _ in previous.kills..current.kills {
                 emitted.push(GameEvent::new(
@@ -73,11 +72,4 @@ impl ScoreboardDelta {
 fn next_sequence(sequence: &mut u64) -> u64 {
     *sequence = sequence.wrapping_add(1);
     *sequence
-}
-
-fn wall_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
 }

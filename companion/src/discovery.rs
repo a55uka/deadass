@@ -19,6 +19,7 @@ fn is_deadlock(candidate: &DiscoveredGame) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("deadlock.exe"))
 }
 
+#[cfg(unix)]
 fn scan_processes() -> Vec<DiscoveredGame> {
     let mut found = Vec::new();
     let Ok(entries) = std::fs::read_dir("/proc") else {
@@ -36,12 +37,19 @@ fn scan_processes() -> Vec<DiscoveredGame> {
     found
 }
 
+#[cfg(not(unix))]
+fn scan_processes() -> Vec<DiscoveredGame> {
+    Vec::new()
+}
+
+#[cfg(unix)]
 fn describe_process(pid: u32) -> Option<DiscoveredGame> {
     let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
     let prefix = prefix_from_environ(pid).or(prefix_from_cwd(pid));
     Some(DiscoveredGame { pid, exe, prefix })
 }
 
+#[cfg(unix)]
 fn prefix_from_environ(pid: u32) -> Option<PathBuf> {
     let raw = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
     let mut compat_data = None;
@@ -60,6 +68,7 @@ fn prefix_from_environ(pid: u32) -> Option<PathBuf> {
     wine_prefix.or(compat_data)
 }
 
+#[cfg(unix)]
 fn prefix_from_cwd(pid: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }

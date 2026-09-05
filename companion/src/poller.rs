@@ -1,5 +1,4 @@
-use deadass_shared::{EventKind, EventSource, GameEvent};
-use std::time::{SystemTime, UNIX_EPOCH};
+use deadass_shared::{EventKind, EventSource, GameEvent, now_ms};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExternalSnapshot {
@@ -29,7 +28,7 @@ impl ExternalPoller {
             return Vec::new();
         };
         let mut emitted = Vec::new();
-        let now = wall_time_ms();
+        let now = now_ms();
         emitted.extend(counter_events(
             &mut self.sequence,
             now,
@@ -91,13 +90,6 @@ fn counter_events(
             GameEvent::new(*sequence, now, EventSource::External, kind)
         })
         .collect()
-}
-
-fn wall_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

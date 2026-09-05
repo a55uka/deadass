@@ -1,5 +1,7 @@
 pub mod config_store;
 pub mod discovery;
+pub mod bridge;
+pub mod game_log;
 pub mod haptics;
 pub mod injector;
 pub mod mem;
@@ -9,8 +11,11 @@ pub mod toys;
 pub mod transport;
 pub mod ui;
 
+pub use bridge::{BRIDGE_RECORD_PREFIX, BRIDGE_SCHEMA, LogTail, ModSignal, parse_bridge_line};
 pub use config_store::{ConfigStore, default_config_path};
 pub use discovery::{DiscoveredGame, discover_deadlock};
-pub use haptics::{HapticCommand, resolve_haptic};
+pub use game_log::{ConsoleLogLocation, discover_console_log};
+pub use haptics::{HapticCommand, HapticGate, resolve_haptic};
 pub use injector::{InjectRequest, InjectionMethod};
+pub use toys::{ConnectionMode, ToyDevice, ToyError, ToyHub};
 pub use transport::{EventBus, EventDeduplicator};

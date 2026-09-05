@@ -1,6 +1,5 @@
-use deadass_shared::{AppConfig, GameEvent, Pattern, TriggerKind};
+use deadass_shared::{AppConfig, GameEvent, Pattern, TriggerKind, now_ms};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HapticCommand {
@@ -64,13 +63,6 @@ pub fn resolve_haptic(
         duration_ms: rule.duration_ms,
         pattern: rule.pattern,
     })
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
