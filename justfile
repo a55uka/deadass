@@ -58,7 +58,7 @@ rust-build *args:
 
 # debug build + launch the companion
 companion-run *args:
-    cargo run -p deadasss-companion {{args}}
+    cargo run -p deadass-companion {{args}}
 
 # launch the Tauri desktop UI (needs webkit2gtk system libs, see README)
 desktop-run *args:
@@ -66,7 +66,7 @@ desktop-run *args:
 
 # release build of the companion
 companion-release *args:
-    cargo build --locked --release -p deadasss-companion {{args}}
+    cargo build --locked --release -p deadass-companion {{args}}
 
 # Rust test suite (whole workspace)
 rust-test *args:

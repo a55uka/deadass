@@ -1239,30 +1239,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "deadass-desktop"
-version = "0.1.0"
-dependencies = [
- "deadass-shared",
- "deadasss-companion",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "deadass-shared"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "deadasss-companion"
+name = "deadass-companion"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1288,6 +1265,29 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "deadass-desktop"
+version = "0.1.0"
+dependencies = [
+ "deadass-companion",
+ "deadass-shared",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "deadass-shared"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
 ]
 
 [[package]]

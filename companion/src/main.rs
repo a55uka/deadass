@@ -1,4 +1,4 @@
-use deadasss_companion::pipeline::{self, disconnect, load_config};
+use deadass_companion::pipeline::{self, disconnect, load_config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

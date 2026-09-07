@@ -1,5 +1,5 @@
+use deadass_companion::log_tail::LogTail;
 use deadass_shared::EventKind;
-use deadasss_companion::log_tail::LogTail;
 use std::io::Write;
 use std::time::Duration;
 
@@ -36,7 +36,7 @@ async fn tail_delivers_mod_lines_as_game_events() {
 
 #[tokio::test]
 async fn tail_waits_for_file_creation_then_delivers() {
-    use deadasss_companion::ui::AppState;
+    use deadass_companion::ui::AppState;
     use std::sync::Arc;
 
     let path = std::env::temp_dir().join(format!("deadass-tail-wait-{}.log", std::process::id()));

@@ -1,7 +1,7 @@
 mod commands;
 
 use commands::Backend;
-use deadasss_companion::pipeline;
+use deadass_companion::pipeline;
 use std::sync::Arc;
 use tauri::Manager;
 

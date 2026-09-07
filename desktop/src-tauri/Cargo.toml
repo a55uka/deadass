@@ -13,4 +13,4 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 deadass-shared = { path = "../../shared" }
-deadasss-companion = { path = "../../companion" }
+deadass-companion = { path = "../../companion" }

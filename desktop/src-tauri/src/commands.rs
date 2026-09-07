@@ -1,7 +1,7 @@
+use deadass_companion::haptics::HapticCommand;
+use deadass_companion::pipeline::Pipeline;
+use deadass_companion::toys::ToyDevice;
 use deadass_shared::TriggerKind;
-use deadasss_companion::haptics::HapticCommand;
-use deadasss_companion::pipeline::Pipeline;
-use deadasss_companion::toys::ToyDevice;
 use std::sync::Arc;
 use tauri::State;
 

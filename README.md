@@ -5,7 +5,7 @@ Deadlock buttplug.io bridge that drives your touys,.,
 ```
 mod/        Deadlock Panorama addon (HUD scrapers -> [DEADASS] JSON on console.log)
 shared/     deadass-shared: GameEvent, TriggerKind, AppConfig
-companion/  deadasss-companion: log tail + HTTP ingress -> dedup -> haptic gate -> ToyHub
+companion/  deadass-companion: log tail + HTTP ingress -> dedup -> haptic gate -> ToyHub
 desktop/    deadass-desktop: Tauri shell over the companion pipeline + vanilla frontend
 scripts/    CSDK VPK builders invoked by the justfile
 ```
