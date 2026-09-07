@@ -5,22 +5,13 @@ use crate::event::EventKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum InputMode {
-    Auto,
-    ModOnly,
-    MemoryOnly,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum Pattern {
     Vibrate,
     Pulse,
     Ramp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TriggerKind {
     Kill,
     Death,
@@ -31,6 +22,35 @@ pub enum TriggerKind {
 }
 
 impl TriggerKind {
+    pub fn key(self) -> String {
+        match self {
+            TriggerKind::Kill => "kill".to_owned(),
+            TriggerKind::Death => "death".to_owned(),
+            TriggerKind::Assist => "assist".to_owned(),
+            TriggerKind::Respawn => "respawn".to_owned(),
+            TriggerKind::AbilityUsed { slot } => format!("ability_used:{slot}"),
+            TriggerKind::AbilityReady { slot } => format!("ability_ready:{slot}"),
+        }
+    }
+
+    fn parse_key(raw: &str) -> Option<Self> {
+        match raw {
+            "kill" => Some(TriggerKind::Kill),
+            "death" => Some(TriggerKind::Death),
+            "assist" => Some(TriggerKind::Assist),
+            "respawn" => Some(TriggerKind::Respawn),
+            _ => {
+                let (name, slot) = raw.split_once(':')?;
+                let slot: u8 = slot.parse().ok()?;
+                match name {
+                    "ability_used" => Some(TriggerKind::AbilityUsed { slot }),
+                    "ability_ready" => Some(TriggerKind::AbilityReady { slot }),
+                    _ => None,
+                }
+            }
+        }
+    }
+
     pub fn family(&self) -> TriggerFamily {
         match self {
             TriggerKind::Kill => TriggerFamily::Kill,
@@ -51,6 +71,33 @@ impl TriggerKind {
             EventKind::AbilityReady { slot } => TriggerKind::AbilityReady { slot },
             EventKind::Respawn => TriggerKind::Respawn,
         }
+    }
+}
+
+impl Serialize for TriggerKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.key())
+    }
+}
+
+impl<'de> Deserialize<'de> for TriggerKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct KeyVisitor;
+
+        impl serde::de::Visitor<'_> for KeyVisitor {
+            type Value = TriggerKind;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a trigger key like \"kill\" or \"ability_used:0\"")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<TriggerKind, E> {
+                TriggerKind::parse_key(value)
+                    .ok_or_else(|| E::custom(format!("unknown trigger {value}")))
+            }
+        }
+
+        deserializer.deserialize_str(KeyVisitor)
     }
 }
 
@@ -97,10 +144,10 @@ pub struct AppConfig {
     pub master_gain: f64,
     pub max_strength_cap: f64,
     pub mute_while_dead: bool,
-    pub input_mode: InputMode,
-    pub dll_tcp_port: u16,
     pub mod_http_port: u16,
     pub buttplug_ws_url: String,
+    #[serde(default)]
+    pub debug_logging: bool,
     pub triggers: HashMap<TriggerKind, TriggerConfig>,
 }
 
@@ -174,11 +221,34 @@ impl Default for AppConfig {
             master_gain: 1.0,
             max_strength_cap: 1.0,
             mute_while_dead: false,
-            input_mode: InputMode::Auto,
-            dll_tcp_port: 24680,
             mod_http_port: 24681,
             buttplug_ws_url: "ws://127.0.0.1:12345".to_string(),
+            debug_logging: false,
             triggers,
         }
+    }
+}
+
+#[cfg(test)]
+mod debug_logging_default {
+    use super::*;
+
+    #[test]
+    fn defaults_to_off() {
+        assert!(!AppConfig::default().debug_logging);
+    }
+
+    #[test]
+    fn missing_key_in_toml_still_parses_as_off() {
+        let full = toml::to_string_pretty(&AppConfig::default()).expect("default serializes");
+        assert!(full.contains("debug_logging"));
+        let stripped: String = full
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("debug_logging"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let parsed: AppConfig =
+            toml::from_str(&stripped).expect("old config without debug_logging parses");
+        assert!(!parsed.debug_logging);
     }
 }

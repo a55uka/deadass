@@ -1,8 +1,8 @@
 pub mod config;
 pub mod event;
 
-pub use config::{AppConfig, InputMode, Pattern, TriggerConfig, TriggerKind};
-pub use event::{EventKind, EventSource, GameEvent};
+pub use config::{AppConfig, Pattern, TriggerConfig, TriggerKind};
+pub use event::{EventKind, GameEvent};
 
 pub fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};

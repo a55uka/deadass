@@ -1,13 +1,16 @@
-use deadass_shared::{EventKind, EventSource, GameEvent};
+use crate::ui::AppState;
+use deadass_shared::{EventKind, GameEvent};
 use serde::Deserialize;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 pub const BRIDGE_RECORD_PREFIX: &str = "[DEADASS]";
 pub const BRIDGE_SCHEMA: u32 = 1;
 
 const TAIL_POLL: Duration = Duration::from_millis(20);
+const WAIT_POLL: Duration = Duration::from_millis(500);
 const READ_CHUNK: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,14 +56,8 @@ pub fn parse_bridge_line(line: &str) -> Option<ModSignal> {
     if record.schema != BRIDGE_SCHEMA {
         return None;
     }
-    let stamped = |kind| {
-        ModSignal::Game(GameEvent::new(
-            record.sequence,
-            record.client_time_ms,
-            EventSource::Mod,
-            kind,
-        ))
-    };
+    let stamped =
+        |kind| ModSignal::Game(GameEvent::new(record.sequence, record.client_time_ms, kind));
     match record.kind {
         WireKind::HookReady {} => Some(ModSignal::HookReady),
         WireKind::Kill {} => Some(stamped(EventKind::Kill)),
@@ -79,25 +76,87 @@ pub fn parse_bridge_line(line: &str) -> Option<ModSignal> {
 pub struct LogTail {
     path: PathBuf,
     sender: mpsc::UnboundedSender<GameEvent>,
+    state: Option<Arc<Mutex<AppState>>>,
 }
 
 impl LogTail {
     pub fn new(path: PathBuf, sender: mpsc::UnboundedSender<GameEvent>) -> Self {
-        Self { path, sender }
+        Self {
+            path,
+            sender,
+            state: None,
+        }
+    }
+
+    pub fn with_state(
+        path: PathBuf,
+        sender: mpsc::UnboundedSender<GameEvent>,
+        state: Arc<Mutex<AppState>>,
+    ) -> Self {
+        Self {
+            path,
+            sender,
+            state: Some(state),
+        }
     }
 
     pub async fn run(self) {
-        let mut offset = end_offset(&self.path);
+        let mut offset: Option<u64> = None;
         let mut pending = Vec::new();
+        let mut announced_waiting = false;
         loop {
-            offset = drain_new_lines(&self.path, &mut pending, offset, &self.sender);
-            tokio::time::sleep(TAIL_POLL).await;
+            match std::fs::metadata(&self.path) {
+                Ok(metadata) if metadata.is_file() => {
+                    let length = metadata.len();
+                    if offset.is_none() {
+                        offset = Some(length);
+                        pending.clear();
+                        self.note_tailing().await;
+                        announced_waiting = false;
+                    }
+                    let cursor = offset.unwrap_or(length);
+                    offset = Some(drain_new_lines(
+                        &self.path,
+                        &mut pending,
+                        cursor,
+                        &self.sender,
+                    ));
+                    tokio::time::sleep(TAIL_POLL).await;
+                }
+                _ => {
+                    offset = None;
+                    pending.clear();
+                    if !announced_waiting {
+                        self.note_waiting().await;
+                        announced_waiting = true;
+                    }
+                    tokio::time::sleep(WAIT_POLL).await;
+                }
+            }
         }
     }
-}
 
-fn end_offset(path: &PathBuf) -> u64 {
-    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+    async fn note_waiting(&self) {
+        if let Some(state) = &self.state {
+            let path = self.path.display().to_string();
+            state.lock().await.note_log_waiting(
+                path.clone(),
+                format!(
+                    "waiting for console.log to be created; add -condebug to deadlock launch options: {path}"
+                ),
+            );
+        }
+    }
+
+    async fn note_tailing(&self) {
+        if let Some(state) = &self.state {
+            let path = self.path.display().to_string();
+            state
+                .lock()
+                .await
+                .note_log_tail(path.clone(), format!("tailing {path}"));
+        }
+    }
 }
 
 fn drain_new_lines(
@@ -154,7 +213,6 @@ mod bridge_line_parsing {
         let Some(ModSignal::Game(event)) = parse_bridge_line(&record("kill")) else {
             panic!("kill line must parse");
         };
-        assert_eq!(event.source, EventSource::Mod);
         assert_eq!(event.kind, EventKind::Kill);
         assert_eq!(event.sequence, 7);
         assert_eq!(event.wall_time_ms, 4242);

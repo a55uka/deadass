@@ -1,4 +1,4 @@
-use deadass_shared::{GameEvent, InputMode, TriggerKind, now_ms};
+use deadass_shared::{GameEvent, TriggerKind, now_ms};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{broadcast, mpsc};
 
@@ -48,12 +48,9 @@ pub struct EventIngress {
 }
 
 impl EventIngress {
-    pub async fn run(mut self, mode: InputMode) {
+    pub async fn run(mut self) {
         let mut dedup = EventDeduplicator::new(200);
         while let Some(event) = self.receiver.recv().await {
-            if !mode_accepts(mode, event) {
-                continue;
-            }
             if !dedup.should_emit(event) {
                 continue;
             }
@@ -106,15 +103,6 @@ impl EventDeduplicator {
     }
 }
 
-fn mode_accepts(mode: InputMode, event: GameEvent) -> bool {
-    use deadass_shared::EventSource;
-    match mode {
-        InputMode::Auto => true,
-        InputMode::ModOnly => matches!(event.source, EventSource::Mod),
-        InputMode::MemoryOnly => matches!(event.source, EventSource::Dll | EventSource::External),
-    }
-}
-
 #[allow(dead_code)]
 fn pending_triggers(events: &[GameEvent]) -> HashMap<TriggerKind, usize> {
     let mut counts = HashMap::new();
@@ -129,10 +117,10 @@ fn pending_triggers(events: &[GameEvent]) -> HashMap<TriggerKind, usize> {
 #[cfg(test)]
 mod deduplicator_collapses_arrival_bursts {
     use super::*;
-    use deadass_shared::{EventKind, EventSource};
+    use deadass_shared::EventKind;
 
     fn kill() -> GameEvent {
-        GameEvent::new(1, 0, EventSource::Mod, EventKind::Kill)
+        GameEvent::new(1, 0, EventKind::Kill)
     }
 
     #[test]

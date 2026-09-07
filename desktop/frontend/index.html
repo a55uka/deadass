@@ -8,44 +8,55 @@
   <script src="app.js" defer></script>
 </head>
 <body>
-  <main>
-    <h1>Deadass Companion</h1>
-
-    <section>
-      <h2>Sources</h2>
-      <div class="row">
-        <span>Mod <span id="dot-mod" class="dot">○</span></span>
+  <div class="app">
+    <header class="topbar">
+      <h1>Deadass Companion</h1>
+      <div class="top-actions">
+        <span id="trail-badge" class="status is-unknown" title="Checking console.log status…">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="trail-text">checking…</span>
+        </span>
+        <button id="btn-log-toggle" aria-expanded="false" aria-controls="log-card">Show log</button>
       </div>
-    </section>
+    </header>
 
-    <section>
-      <h2>Toys (<span id="toy-mode">disconnected</span>)</h2>
-      <div class="row">
-        <button id="btn-embedded">Embedded</button>
-        <button id="btn-central">Central</button>
-        <button id="btn-disconnect">Disconnect</button>
-        <button id="btn-rescan">Rescan</button>
-      </div>
-      <p id="devices">no devices</p>
-      <p id="toy-error" class="error" hidden></p>
-    </section>
+    <main>
+      <section>
+        <h2>Toys (<span id="toy-mode">disconnected</span>)</h2>
+        <div class="row">
+          <label>Backend
+            <select id="toy-backend">
+              <option value="embedded">Embedded</option>
+              <option value="central">External (Central)</option>
+            </select>
+          </label>
+          <button id="btn-connect">Connect</button>
+          <button id="btn-disconnect">Disconnect</button>
+          <button id="btn-rescan">Rescan</button>
+        </div>
+        <p id="devices">no devices</p>
+        <p id="toy-error" class="error" hidden></p>
+      </section>
 
-    <section>
-      <h2>Test fire</h2>
-      <div class="row">
-        <button data-fire="kill">Kill</button>
-        <button data-fire="death">Death</button>
-        <button data-fire="assist">Assist</button>
-        <button data-fire="respawn">Respawn</button>
-        <button data-fire="ability">Ability</button>
-        <button data-fire="ready">Ready</button>
-      </div>
-    </section>
+      <details>
+        <summary>Dev / testing</summary>
+        <div class="row">
+          <button data-fire="kill">Kill</button>
+          <button data-fire="death">Death</button>
+          <button data-fire="assist">Assist</button>
+          <button data-fire="respawn">Respawn</button>
+          <button data-fire="ability">Ability</button>
+          <button data-fire="ready">Ready</button>
+        </div>
+        <p class="muted">Sends a fake game event. Only needed while developing.</p>
+      </details>
 
-    <section>
-      <h2>Log</h2>
-      <p id="log">waiting for deadlock</p>
-    </section>
-  </main>
+      <section id="log-card" hidden>
+        <h2>Log</h2>
+        <p class="muted mono" id="log-path"></p>
+        <pre id="log">waiting for deadlock</pre>
+      </section>
+    </main>
+  </div>
 </body>
 </html>
