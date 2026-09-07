@@ -5,10 +5,12 @@
     logPrefix: "[DEADASS]",
     modVersion: "0.1.0",
     pollIntervalSeconds: 0.1,
+    idlePollSeconds: 1.0,
     baselineSettlePolls: 250,
     killStreakResetPolls: 3,
-    damageImpactIntervalPolls: 3,
-    killBannerIntervalPolls: 3,
+    slowScanPolls: 5,
+    bannerScanPolls: 10,
+    labelSearchBudget: 600,
     killBannerCooldownMs: 1500,
     respawnDeathCooldownMs: 2000,
     killBannerPatterns: [
@@ -200,19 +202,48 @@
       return panel;
     },
 
-    labelTexts: function (panel, out) {
-      if (!Panels.valid(panel)) {
-        return;
-      }
-      if (Panels.property(panel, "paneltype") === "Label" && Panels.property(panel, "visible") !== false) {
-        var text = Panels.property(panel, "text");
-        if (typeof text === "string" && text !== "" && text.charAt(0) !== "{") {
-          out.push(text);
+    findLabel: function (panel, matches, limit) {
+      var stack = [panel];
+      var visited = 0;
+      while (stack.length > 0 && visited < limit) {
+        var node = stack.pop();
+        visited++;
+        if (!Panels.valid(node)) {
+          continue;
+        }
+        if (Panels.property(node, "paneltype") === "Label" && Panels.property(node, "visible") !== false) {
+          var text = Panels.property(node, "text");
+          if (typeof text === "string" && text !== "" && text.charAt(0) !== "{" && matches(text)) {
+            return text;
+          }
+        }
+        var children = Panels.children(node);
+        for (var i = children.length - 1; i >= 0; i--) {
+          stack.push(children[i]);
         }
       }
-      var children = Panels.children(panel);
-      for (var i = 0; i < children.length; i++) {
-        Panels.labelTexts(children[i], out);
+      return null;
+    },
+
+    collectLabels: function (panel, matches, limit, out) {
+      var stack = [panel];
+      var visited = 0;
+      while (stack.length > 0 && visited < limit) {
+        var node = stack.pop();
+        visited++;
+        if (!Panels.valid(node)) {
+          continue;
+        }
+        if (Panels.property(node, "paneltype") === "Label" && Panels.property(node, "visible") !== false) {
+          var text = Panels.property(node, "text");
+          if (typeof text === "string" && text !== "" && text.charAt(0) !== "{" && matches(text)) {
+            out.push(text);
+          }
+        }
+        var children = Panels.children(node);
+        for (var i = children.length - 1; i >= 0; i--) {
+          stack.push(children[i]);
+        }
       }
     },
 
@@ -233,8 +264,8 @@
     panels: [],
     states: [],
 
-    signatureRoot: function (context) {
-      return Panels.childById(Panels.root(context), "hud_signature");
+    signatureRoot: function (ancestor) {
+      return Panels.childById(ancestor, "hud_signature");
     },
 
     entries: function (root) {
@@ -341,8 +372,8 @@
       }
     },
 
-    poll: function (context, forceBaseline, suspended) {
-      var root = Abilities.signatureRoot(context);
+    poll: function (ancestor, forceBaseline, suspended) {
+      var root = Abilities.signatureRoot(ancestor);
       if (!Panels.valid(root)) {
         Abilities.reset();
         return;
@@ -376,13 +407,21 @@
   var KillStreak = {
     lastCount: null,
     nullPolls: 0,
+    textNode: null,
+
+    resolveTextNode: function (player) {
+      if (Panels.valid(KillStreak.textNode)) {
+        return true;
+      }
+      KillStreak.textNode = Panels.childById(player, "KillStreakText");
+      return Panels.valid(KillStreak.textNode);
+    },
 
     count: function (player) {
-      var textNode = Panels.childById(player, "KillStreakText");
-      if (!Panels.valid(textNode)) {
+      if (!KillStreak.resolveTextNode(player)) {
         return null;
       }
-      var children = Panels.children(textNode);
+      var children = Panels.children(KillStreak.textNode);
       for (var i = 0; i < children.length; i++) {
         if (Panels.property(children[i], "paneltype") !== "Label") {
           continue;
@@ -424,21 +463,24 @@
     reset: function () {
       KillStreak.lastCount = null;
       KillStreak.nullPolls = 0;
+      KillStreak.textNode = null;
     }
   };
 
   var Assists = {
     credited: [],
-    polls: 0,
+    container: null,
 
-    poll: function (root) {
-      Assists.polls++;
-      if (Assists.polls < CONFIG.damageImpactIntervalPolls) {
-        return;
+    resolveContainer: function (root) {
+      if (Panels.valid(Assists.container)) {
+        return true;
       }
-      Assists.polls = 0;
-      var container = Panels.childById(root, "damageImpactInfo");
-      if (!Panels.valid(container)) {
+      Assists.container = Panels.childById(root, "damageImpactInfo");
+      return Panels.valid(Assists.container);
+    },
+
+    check: function (root) {
+      if (!Assists.resolveContainer(root)) {
         return;
       }
       var live = [];
@@ -448,7 +490,7 @@
         }
       }
       Assists.credited = live;
-      var children = Panels.children(container);
+      var children = Panels.children(Assists.container);
       for (var i = 0; i < children.length; i++) {
         var child = children[i];
         if (!Panels.valid(child) || !Panels.hasClass(child, "assist")) {
@@ -465,30 +507,24 @@
 
   var KillBanner = {
     lastKey: null,
-    polls: 0,
 
-    key: function (root) {
-      var texts = [];
-      Panels.labelTexts(root, texts);
-      var hits = [];
-      for (var i = 0; i < texts.length; i++) {
-        for (var p = 0; p < CONFIG.killBannerPatterns.length; p++) {
-          if (CONFIG.killBannerPatterns[p].test(texts[i])) {
-            hits.push(texts[i]);
-            break;
-          }
+    matchesBanner: function (text) {
+      for (var p = 0; p < CONFIG.killBannerPatterns.length; p++) {
+        if (CONFIG.killBannerPatterns[p].test(text)) {
+          return true;
         }
       }
+      return false;
+    },
+
+    key: function (root) {
+      var hits = [];
+      Panels.collectLabels(root, KillBanner.matchesBanner, CONFIG.labelSearchBudget, hits);
       hits.sort();
       return hits.length > 0 ? hits.join("|") : null;
     },
 
-    poll: function (root) {
-      KillBanner.polls++;
-      if (KillBanner.polls < CONFIG.killBannerIntervalPolls) {
-        return;
-      }
-      KillBanner.polls = 0;
+    check: function (root) {
       var key = KillBanner.key(root);
       var previous = KillBanner.lastKey;
       KillBanner.lastKey = key;
@@ -501,16 +537,10 @@
   var RespawnTimer = {
     dead: false,
 
-    poll: function (root) {
-      var texts = [];
-      Panels.labelTexts(root, texts);
-      var timerDead = false;
-      for (var i = 0; i < texts.length; i++) {
-        if (/respawn/i.test(texts[i])) {
-          timerDead = true;
-          break;
-        }
-      }
+    check: function (root) {
+      var timerDead = Panels.findLabel(root, function (text) {
+        return /respawn/i.test(text);
+      }, CONFIG.labelSearchBudget) !== null;
       if (timerDead === RespawnTimer.dead) {
         return;
       }
@@ -526,9 +556,11 @@
   var Match = {
     context: $.GetContextPanel(),
     localPlayer: null,
+    ancestor: null,
     deathBaseline: false,
     wasDead: false,
     settlePolls: 0,
+    tick: 0,
 
     findLocalPlayer: function () {
       if (Panels.valid(Match.localPlayer)) {
@@ -545,6 +577,14 @@
         }
       }
       return null;
+    },
+
+    resolveAncestor: function () {
+      if (Panels.valid(Match.ancestor)) {
+        return Match.ancestor;
+      }
+      Match.ancestor = Panels.root(Match.context);
+      return Match.ancestor;
     },
 
     pollLiveness: function (player) {
@@ -577,16 +617,23 @@
       var player = Match.findLocalPlayer();
       if (!player) {
         Abilities.reset();
-        $.Schedule(CONFIG.pollIntervalSeconds, Match.poll);
+        Match.ancestor = null;
+        Assists.container = null;
+        $.Schedule(CONFIG.idlePollSeconds, Match.poll);
         return;
       }
+      var ancestor = Match.resolveAncestor();
       var liveness = Match.pollLiveness(player);
-      Abilities.poll(Match.context, liveness.rebaseline, liveness.isDead);
+      Abilities.poll(ancestor, liveness.rebaseline, liveness.isDead);
       KillStreak.poll(player, liveness.rebaseline, liveness.settling);
-      var ancestor = Panels.root(Match.context);
-      Assists.poll(ancestor);
-      KillBanner.poll(ancestor);
-      RespawnTimer.poll(ancestor);
+      Match.tick = (Match.tick + 1) % CONFIG.bannerScanPolls;
+      if (Match.tick % CONFIG.slowScanPolls === 0) {
+        Assists.check(ancestor);
+        RespawnTimer.check(ancestor);
+      }
+      if (Match.tick === 0) {
+        KillBanner.check(ancestor);
+      }
       $.Schedule(CONFIG.pollIntervalSeconds, Match.poll);
     }
   };
