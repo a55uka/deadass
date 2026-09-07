@@ -46,7 +46,12 @@ fn deadlock_installs(root: PathBuf) -> Vec<PathBuf> {
                 .ok()?
                 .app(DEADLOCK_APP_ID)?;
             let app = app.ok()?;
-            (app.app_id == DEADLOCK_APP_ID).then(|| library.join("steamapps").join("common").join(&app.install_dir))
+            (app.app_id == DEADLOCK_APP_ID).then(|| {
+                library
+                    .join("steamapps")
+                    .join("common")
+                    .join(&app.install_dir)
+            })
         })
         .filter(|install| install.join("game/citadel").is_dir())
         .collect()

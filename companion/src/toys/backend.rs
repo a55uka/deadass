@@ -21,12 +21,10 @@ impl ButtplugToyBackend {
         self.client
             .devices()
             .into_values()
-            .map(|device: ButtplugClientDevice| {
-                ToyDevice {
-                    id: device.index().to_string(),
-                    name: device.name().to_string(),
-                    can_vibrate: device.output_available(OutputType::Vibrate),
-                }
+            .map(|device: ButtplugClientDevice| ToyDevice {
+                id: device.index().to_string(),
+                name: device.name().to_string(),
+                can_vibrate: device.output_available(OutputType::Vibrate),
             })
             .collect()
     }
@@ -51,8 +49,14 @@ impl ButtplugToyBackend {
                 self.vibrate_hold(&targets, strength, command.duration_ms)
                     .await
             }
-            Pattern::Pulse => self.vibrate_pulsed(&targets, strength, command.duration_ms).await,
-            Pattern::Ramp => self.vibrate_ramp(&targets, strength, command.duration_ms).await,
+            Pattern::Pulse => {
+                self.vibrate_pulsed(&targets, strength, command.duration_ms)
+                    .await
+            }
+            Pattern::Ramp => {
+                self.vibrate_ramp(&targets, strength, command.duration_ms)
+                    .await
+            }
         }
     }
 
@@ -60,7 +64,12 @@ impl ButtplugToyBackend {
         let _ = self.client.disconnect().await;
     }
 
-    async fn vibrate_hold(&self, targets: &[ButtplugClientDevice], strength: f64, duration_ms: u64) {
+    async fn vibrate_hold(
+        &self,
+        targets: &[ButtplugClientDevice],
+        strength: f64,
+        duration_ms: u64,
+    ) {
         self.set_all(targets, strength).await;
         if duration_ms > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
@@ -84,7 +93,12 @@ impl ButtplugToyBackend {
         }
     }
 
-    async fn vibrate_ramp(&self, targets: &[ButtplugClientDevice], strength: f64, duration_ms: u64) {
+    async fn vibrate_ramp(
+        &self,
+        targets: &[ButtplugClientDevice],
+        strength: f64,
+        duration_ms: u64,
+    ) {
         let steps = [0.4, 0.7, 1.0];
         let each = duration_ms / steps.len() as u64;
         for step in steps {

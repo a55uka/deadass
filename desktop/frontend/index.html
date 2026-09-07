@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deadass Companion</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Deadass Companion</h1>
+
+    <section>
+      <h2>Sources</h2>
+      <div class="row">
+        <span>Mod <span id="dot-mod" class="dot">○</span></span>
+        <span>DLL <span id="dot-dll" class="dot">○</span></span>
+        <span>External <span id="dot-external" class="dot">○</span></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Toys (<span id="toy-mode">disconnected</span>)</h2>
+      <div class="row">
+        <button id="btn-embedded">Embedded</button>
+        <button id="btn-central">Central</button>
+        <button id="btn-disconnect">Disconnect</button>
+        <button id="btn-rescan">Rescan</button>
+      </div>
+      <p id="devices">no devices</p>
+      <p id="toy-error" class="error" hidden></p>
+    </section>
+
+    <section>
+      <h2>Test fire</h2>
+      <div class="row">
+        <button data-fire="kill">Kill</button>
+        <button data-fire="death">Death</button>
+        <button data-fire="assist">Assist</button>
+        <button data-fire="respawn">Respawn</button>
+        <button data-fire="ability">Ability</button>
+        <button data-fire="ready">Ready</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Log</h2>
+      <p id="log">waiting for deadlock</p>
+    </section>
+  </main>
+</body>
+</html>

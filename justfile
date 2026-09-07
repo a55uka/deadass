@@ -10,6 +10,7 @@
 #   just pack                # pack dist/deadass.vpk without the CSDK (zip fallback)
 #   just clean               # remove dist/ and CSDK build dirs
 #   just companion-run       # debug build + launch the companion
+#   just desktop-run        # launch the Tauri desktop UI
 #   just dll-build           # build the Windows fidelity DLL (see recipe)
 #
 # Override the CSDK location with `csdk=...` or $DEADLOCK_CSDK.
@@ -59,6 +60,10 @@ rust-build *args:
 # debug build + launch the companion
 companion-run *args:
     cargo run -p deadasss-companion {{args}}
+
+# launch the Tauri desktop UI (needs webkit2gtk system libs, see README)
+desktop-run *args:
+    cargo run -p deadass-desktop {{args}}
 
 # release build of the companion
 companion-release *args:

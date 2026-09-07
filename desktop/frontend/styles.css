@@ -1,0 +1,65 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: #1a1a1e;
+  color: #e8e8ea;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0 0 8px;
+}
+
+h2 {
+  font-size: 1rem;
+  margin: 0 0 8px;
+  color: #a9a9b3;
+}
+
+section {
+  background: #232329;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dot {
+  font-size: 1.2rem;
+  color: #55555e;
+}
+
+.dot.on {
+  color: #4ade80;
+}
+
+button {
+  background: #3a3a44;
+  color: #e8e8ea;
+  border: 1px solid #55555e;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #4a4a56;
+}
+
+.error {
+  color: #f87171;
+}
