@@ -1,13 +1,7 @@
 pub mod config;
 pub mod event;
+pub mod time;
 
-pub use config::{AppConfig, Pattern, TriggerConfig, TriggerKind};
+pub use config::{AppConfig, Pattern, TriggerConfig, TriggerFamily, TriggerKind};
 pub use event::{EventKind, GameEvent};
-
-pub fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
-}
+pub use time::now_ms;

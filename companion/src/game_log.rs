@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 pub const DEADLOCK_APP_ID: u32 = 1422450;
+const CONSOLE_LOG_RELATIVE: &str = "game/citadel/console.log";
+const CITADEL_DIR_RELATIVE: &str = "game/citadel";
 
 #[derive(Debug, Clone)]
 pub struct ConsoleLogLocation {
@@ -9,26 +11,29 @@ pub struct ConsoleLogLocation {
 }
 
 pub fn discover_console_log() -> Option<ConsoleLogLocation> {
-    let install = steam_roots().into_iter().find_map(deadlock_install)?;
-    let path = install.join("game/citadel/console.log");
-    let already_created = path.is_file();
+    let install = steam_library_roots()
+        .into_iter()
+        .find_map(deadlock_install)?;
+    let path = install.join(CONSOLE_LOG_RELATIVE);
     Some(ConsoleLogLocation {
+        already_created: path.is_file(),
         path,
-        already_created,
     })
 }
 
-fn steam_roots() -> Vec<PathBuf> {
+fn steam_library_roots() -> Vec<PathBuf> {
     steamlocate::locate_all()
         .as_ref()
-        .map(|dirs| dirs.iter().map(|dir| dir.path().to_owned()).collect())
+        .map(|roots| roots.iter().map(|root| root.path().to_owned()).collect())
         .unwrap_or_default()
 }
 
-fn deadlock_install(root: PathBuf) -> Option<PathBuf> {
-    let steam_dir = steamlocate::SteamDir::from_dir(&root).ok()?;
-    let libraries = steam_dir.library_paths().ok()?;
-    let install = libraries.into_iter().find_map(|library| {
+fn deadlock_install(steam_root: PathBuf) -> Option<PathBuf> {
+    let libraries = steamlocate::SteamDir::from_dir(&steam_root)
+        .ok()?
+        .library_paths()
+        .ok()?;
+    let install_dir = libraries.into_iter().find_map(|library| {
         let app = steamlocate::Library::from_dir(&library)
             .ok()?
             .app(DEADLOCK_APP_ID)?;
@@ -40,5 +45,8 @@ fn deadlock_install(root: PathBuf) -> Option<PathBuf> {
                 .join(&app.install_dir)
         })
     })?;
-    install.join("game/citadel").is_dir().then_some(install)
+    install_dir
+        .join(CITADEL_DIR_RELATIVE)
+        .is_dir()
+        .then_some(install_dir)
 }

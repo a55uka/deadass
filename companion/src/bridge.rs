@@ -1,17 +1,8 @@
-use crate::ui::AppState;
 use deadass_shared::{EventKind, GameEvent};
 use serde::Deserialize;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
 
 pub const BRIDGE_RECORD_PREFIX: &str = "[DEADASS]";
 pub const BRIDGE_SCHEMA: u32 = 1;
-
-const TAIL_POLL: Duration = Duration::from_millis(20);
-const WAIT_POLL: Duration = Duration::from_millis(500);
-const READ_CHUNK: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModSignal {
@@ -22,8 +13,6 @@ pub enum ModSignal {
 #[derive(Deserialize)]
 struct WireRecord {
     schema: u32,
-    #[allow(dead_code)]
-    session_id: String,
     sequence: u64,
     client_time_ms: u64,
     #[serde(flatten)]
@@ -50,156 +39,29 @@ enum WireKind {
 }
 
 pub fn parse_bridge_line(line: &str) -> Option<ModSignal> {
-    let prefix_at = line.find(BRIDGE_RECORD_PREFIX)?;
-    let record: WireRecord =
-        serde_json::from_str(&line[prefix_at + BRIDGE_RECORD_PREFIX.len()..]).ok()?;
+    let payload_at = line.find(BRIDGE_RECORD_PREFIX)? + BRIDGE_RECORD_PREFIX.len();
+    let record: WireRecord = serde_json::from_str(&line[payload_at..]).ok()?;
     if record.schema != BRIDGE_SCHEMA {
         return None;
     }
-    let stamped =
-        |kind| ModSignal::Game(GameEvent::new(record.sequence, record.client_time_ms, kind));
+    let game = |kind| ModSignal::Game(GameEvent::new(record.sequence, record.client_time_ms, kind));
     match record.kind {
         WireKind::HookReady {} => Some(ModSignal::HookReady),
-        WireKind::Kill {} => Some(stamped(EventKind::Kill)),
-        WireKind::Death {} => Some(stamped(EventKind::Death)),
-        WireKind::Assist {} => Some(stamped(EventKind::Assist)),
-        WireKind::Respawn {} => Some(stamped(EventKind::Respawn)),
+        WireKind::Kill {} => Some(game(EventKind::Kill)),
+        WireKind::Death {} => Some(game(EventKind::Death)),
+        WireKind::Assist {} => Some(game(EventKind::Assist)),
+        WireKind::Respawn {} => Some(game(EventKind::Respawn)),
         WireKind::AbilityUsed { ability_slot } => {
-            Some(stamped(EventKind::AbilityUsed { slot: ability_slot }))
+            Some(game(EventKind::AbilityUsed { slot: ability_slot }))
         }
         WireKind::AbilityReady { ability_slot } => {
-            Some(stamped(EventKind::AbilityReady { slot: ability_slot }))
+            Some(game(EventKind::AbilityReady { slot: ability_slot }))
         }
     }
-}
-
-pub struct LogTail {
-    path: PathBuf,
-    sender: mpsc::UnboundedSender<GameEvent>,
-    state: Option<Arc<Mutex<AppState>>>,
-}
-
-impl LogTail {
-    pub fn new(path: PathBuf, sender: mpsc::UnboundedSender<GameEvent>) -> Self {
-        Self {
-            path,
-            sender,
-            state: None,
-        }
-    }
-
-    pub fn with_state(
-        path: PathBuf,
-        sender: mpsc::UnboundedSender<GameEvent>,
-        state: Arc<Mutex<AppState>>,
-    ) -> Self {
-        Self {
-            path,
-            sender,
-            state: Some(state),
-        }
-    }
-
-    pub async fn run(self) {
-        let mut offset: Option<u64> = None;
-        let mut pending = Vec::new();
-        let mut announced_waiting = false;
-        loop {
-            match std::fs::metadata(&self.path) {
-                Ok(metadata) if metadata.is_file() => {
-                    let length = metadata.len();
-                    if offset.is_none() {
-                        offset = Some(length);
-                        pending.clear();
-                        self.note_tailing().await;
-                        announced_waiting = false;
-                    }
-                    let cursor = offset.unwrap_or(length);
-                    offset = Some(drain_new_lines(
-                        &self.path,
-                        &mut pending,
-                        cursor,
-                        &self.sender,
-                    ));
-                    tokio::time::sleep(TAIL_POLL).await;
-                }
-                _ => {
-                    offset = None;
-                    pending.clear();
-                    if !announced_waiting {
-                        self.note_waiting().await;
-                        announced_waiting = true;
-                    }
-                    tokio::time::sleep(WAIT_POLL).await;
-                }
-            }
-        }
-    }
-
-    async fn note_waiting(&self) {
-        if let Some(state) = &self.state {
-            let path = self.path.display().to_string();
-            state.lock().await.note_log_waiting(
-                path.clone(),
-                format!(
-                    "waiting for console.log to be created; add -condebug to deadlock launch options: {path}"
-                ),
-            );
-        }
-    }
-
-    async fn note_tailing(&self) {
-        if let Some(state) = &self.state {
-            let path = self.path.display().to_string();
-            state
-                .lock()
-                .await
-                .note_log_tail(path.clone(), format!("tailing {path}"));
-        }
-    }
-}
-
-fn drain_new_lines(
-    path: &PathBuf,
-    pending: &mut Vec<u8>,
-    offset: u64,
-    sender: &mpsc::UnboundedSender<GameEvent>,
-) -> u64 {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return offset,
-    };
-    let length = file.metadata().map(|meta| meta.len()).unwrap_or(offset);
-    let mut cursor = if length < offset { 0 } else { offset };
-    if file.seek(SeekFrom::Start(cursor)).is_err() {
-        return cursor;
-    }
-    let mut chunk = vec![0u8; READ_CHUNK];
-    loop {
-        let read = match file.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
-            Ok(read) => read,
-        };
-        pending.extend_from_slice(&chunk[..read]);
-        cursor += read as u64;
-        while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
-            let line: Vec<u8> = pending.drain(..=end).collect();
-            if let Ok(text) = std::str::from_utf8(&line)
-                && let Some(ModSignal::Game(event)) = parse_bridge_line(text)
-            {
-                let _ = sender.send(event);
-            }
-        }
-        if read < READ_CHUNK {
-            break;
-        }
-    }
-    cursor
 }
 
 #[cfg(test)]
-mod bridge_line_parsing {
+mod tests {
     use super::*;
 
     fn record(event: &str) -> String {
@@ -209,7 +71,7 @@ mod bridge_line_parsing {
     }
 
     #[test]
-    fn kill_maps_to_mod_game_event() {
+    fn kill_maps_to_game_event() {
         let Some(ModSignal::Game(event)) = parse_bridge_line(&record("kill")) else {
             panic!("kill line must parse");
         };

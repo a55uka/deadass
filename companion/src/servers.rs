@@ -3,17 +3,17 @@ use deadass_shared::GameEvent;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-pub struct ModHttpServer {
+pub struct ModEventServer {
     port: u16,
     sender: mpsc::UnboundedSender<GameEvent>,
 }
 
-impl ModHttpServer {
+impl ModEventServer {
     pub fn new(port: u16, sender: mpsc::UnboundedSender<GameEvent>) -> Self {
         Self { port, sender }
     }
 
-    pub async fn run(self) -> anyhow::Result<()> {
+    pub async fn serve(self) -> anyhow::Result<()> {
         let sender = self.sender.clone();
         let app = Router::new().route(
             "/event",

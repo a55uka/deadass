@@ -22,12 +22,16 @@ pub struct ToyDevice {
 }
 
 impl ToyDevice {
-    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn vibrating(id: impl Into<String>, name: impl Into<String>, can_vibrate: bool) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
-            can_vibrate: true,
+            can_vibrate,
         }
+    }
+
+    pub fn names(devices: &[Self]) -> Vec<String> {
+        devices.iter().map(|device| device.name.clone()).collect()
     }
 }
 
@@ -58,14 +62,6 @@ impl ToyHub {
         self.mode
     }
 
-    pub fn central_url(&self) -> &str {
-        &self.central_url
-    }
-
-    pub fn set_central_url(&mut self, url: String) {
-        self.central_url = url;
-    }
-
     pub fn devices(&self) -> Vec<ToyDevice> {
         self.backend
             .as_ref()
@@ -74,15 +70,13 @@ impl ToyHub {
     }
 
     pub async fn connect_embedded(&mut self) -> Result<(), ToyError> {
-        let backend = embedded::connect_embedded().await?;
-        self.backend = Some(backend);
+        self.backend = Some(embedded::connect_embedded().await?);
         self.mode = ConnectionMode::Embedded;
         Ok(())
     }
 
     pub async fn connect_central(&mut self) -> Result<(), ToyError> {
-        let backend = central::connect_central(&self.central_url).await?;
-        self.backend = Some(backend);
+        self.backend = Some(central::connect_central(&self.central_url).await?);
         self.mode = ConnectionMode::ExternalCentral;
         Ok(())
     }

@@ -26,11 +26,4 @@ impl GameEvent {
             kind,
         }
     }
-
-    pub fn is_ability(&self) -> bool {
-        matches!(
-            self.kind,
-            EventKind::AbilityUsed { .. } | EventKind::AbilityReady { .. }
-        )
-    }
 }

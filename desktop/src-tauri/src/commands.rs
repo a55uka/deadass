@@ -1,6 +1,7 @@
 use deadass_shared::TriggerKind;
 use deadasss_companion::haptics::HapticCommand;
 use deadasss_companion::pipeline::Pipeline;
+use deadasss_companion::toys::ToyDevice;
 use std::sync::Arc;
 use tauri::State;
 
@@ -20,32 +21,52 @@ pub struct StatusView {
 }
 
 async fn snapshot(backend: &Backend) -> StatusView {
-    let (mode, devices) = {
-        let hub = backend.hub.lock().await;
-        (hub.mode(), hub.devices())
-    };
+    let hub = backend.hub.lock().await;
+    let devices = hub.devices();
+    let mode = format!("{:?}", hub.mode());
+    drop(hub);
     let state = backend.state.lock().await;
     StatusView {
-        mod_active: state.sources.mod_active(),
-        log_tailing: state.log_tailing(),
-        log_phase: state.log_phase.as_str().to_owned(),
+        mod_active: state.sources.is_live(),
+        log_tailing: state.is_tailing(),
+        log_phase: state.log_phase.to_string(),
         log_path: state.log_path.clone(),
-        toy_mode: format!("{mode:?}"),
-        devices: devices.iter().map(|device| device.name.clone()).collect(),
+        toy_mode: mode,
+        devices: ToyDevice::names(&devices),
         toy_error: state.toys.error.clone(),
         log: state.last_log.clone(),
         log_lines: state.log_lines.iter().cloned().collect(),
     }
 }
 
-async fn refresh_toys(backend: &Backend) -> Vec<String> {
-    let (mode, devices) = {
-        let hub = backend.hub.lock().await;
-        (hub.mode(), hub.devices())
-    };
-    let names: Vec<String> = devices.iter().map(|device| device.name.clone()).collect();
-    backend.state.lock().await.note_toys(mode, &devices);
+async fn sync_toys(backend: &Backend) -> Vec<String> {
+    let hub = backend.hub.lock().await;
+    let mode = hub.mode();
+    let devices = hub.devices();
+    drop(hub);
+    let names = ToyDevice::names(&devices);
+    backend.state.lock().await.set_toys(mode, &devices);
     names
+}
+
+async fn finish_toy_action(
+    backend: &Backend,
+    outcome: Result<Vec<String>, String>,
+    label: &str,
+) -> StatusView {
+    match outcome {
+        Ok(devices) => {
+            let line = format!("{label}: {}", describe_devices(&devices));
+            backend.state.lock().await.push_log(line);
+        }
+        Err(error) => {
+            let line = format!("{label} failed: {error}");
+            let mut state = backend.state.lock().await;
+            state.push_log(line);
+            state.set_toy_error(error);
+        }
+    }
+    snapshot(backend).await
 }
 
 fn describe_devices(names: &[String]) -> String {
@@ -56,10 +77,6 @@ fn describe_devices(names: &[String]) -> String {
     }
 }
 
-async fn fail_toys(backend: &Backend, error: String) {
-    backend.state.lock().await.note_toy_error(error);
-}
-
 #[tauri::command]
 pub async fn get_status(backend: State<'_, Backend>) -> Result<StatusView, String> {
     Ok(snapshot(&backend).await)
@@ -68,95 +85,56 @@ pub async fn get_status(backend: State<'_, Backend>) -> Result<StatusView, Strin
 #[tauri::command]
 pub async fn connect_embedded(backend: State<'_, Backend>) -> Result<StatusView, String> {
     let outcome = backend.hub.lock().await.connect_embedded().await;
-    match outcome {
-        Ok(()) => {
-            let devices = refresh_toys(&backend).await;
-            backend
-                .state
-                .lock()
-                .await
-                .log(format!("connected embedded: {}", describe_devices(&devices)));
-        }
-        Err(error) => {
-            let line = format!("embedded connect failed: {error}");
-            backend.state.lock().await.log(line.clone());
-            fail_toys(&backend, error.to_string()).await;
-        }
-    }
-    Ok(snapshot(&backend).await)
+    let outcome = match outcome {
+        Ok(()) => Ok(sync_toys(&backend).await),
+        Err(error) => Err(error.to_string()),
+    };
+    Ok(finish_toy_action(&backend, outcome, "connected embedded").await)
 }
 
 #[tauri::command]
 pub async fn connect_central(backend: State<'_, Backend>) -> Result<StatusView, String> {
     let outcome = backend.hub.lock().await.connect_central().await;
-    match outcome {
-        Ok(()) => {
-            let devices = refresh_toys(&backend).await;
-            backend
-                .state
-                .lock()
-                .await
-                .log(format!("connected central: {}", describe_devices(&devices)));
-        }
-        Err(error) => {
-            let line = format!("central connect failed: {error}");
-            backend.state.lock().await.log(line.clone());
-            fail_toys(&backend, error.to_string()).await;
-        }
-    }
-    Ok(snapshot(&backend).await)
+    let outcome = match outcome {
+        Ok(()) => Ok(sync_toys(&backend).await),
+        Err(error) => Err(error.to_string()),
+    };
+    Ok(finish_toy_action(&backend, outcome, "connected central").await)
 }
 
 #[tauri::command]
 pub async fn disconnect(backend: State<'_, Backend>) -> Result<StatusView, String> {
     backend.hub.lock().await.disconnect().await;
-    refresh_toys(&backend).await;
-    backend.state.lock().await.log("disconnected");
+    sync_toys(&backend).await;
+    backend.state.lock().await.push_log("disconnected");
     Ok(snapshot(&backend).await)
 }
 
 #[tauri::command]
 pub async fn rescan(backend: State<'_, Backend>) -> Result<StatusView, String> {
     let outcome = backend.hub.lock().await.rescan().await;
-    match outcome {
-        Ok(()) => {
-            let devices = refresh_toys(&backend).await;
-            backend
-                .state
-                .lock()
-                .await
-                .log(format!("rescan: {}", describe_devices(&devices)));
-        }
-        Err(error) => {
-            let line = format!("rescan failed: {error}");
-            backend.state.lock().await.log(line.clone());
-            fail_toys(&backend, error.to_string()).await;
-        }
-    }
-    Ok(snapshot(&backend).await)
+    let outcome = match outcome {
+        Ok(()) => Ok(sync_toys(&backend).await),
+        Err(error) => Err(error.to_string()),
+    };
+    Ok(finish_toy_action(&backend, outcome, "rescan").await)
 }
 
 #[tauri::command]
 pub async fn test_fire(backend: State<'_, Backend>, kind: String) -> Result<String, String> {
     let trigger = parse_trigger(&kind)?;
     let config = backend.state.lock().await.config.clone();
-    let rule = config.trigger(trigger);
-    if !rule.enabled {
+    let Some(command) = HapticCommand::from_trigger(&config, trigger) else {
         let line = format!("test {kind}: disabled in config");
-        backend.state.lock().await.log(line.clone());
+        backend.state.lock().await.push_log(line.clone());
         return Ok(line);
-    }
-    let command = HapticCommand {
-        strength: rule.scaled_strength(config.master_gain, config.max_strength_cap),
-        duration_ms: rule.duration_ms,
-        pattern: rule.pattern,
     };
     backend.hub.lock().await.play(command).await;
     let line = format!(
         "test {kind}: vibrate strength={:.2} duration_ms={} pattern={:?}",
         command.strength, command.duration_ms, command.pattern,
     );
-    backend.state.lock().await.log(line.clone());
+    backend.state.lock().await.push_log(line.clone());
     Ok(line)
 }
 

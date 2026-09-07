@@ -1,5 +1,5 @@
 use deadass_shared::EventKind;
-use deadasss_companion::bridge::LogTail;
+use deadasss_companion::log_tail::LogTail;
 use std::io::Write;
 use std::time::Duration;
 
@@ -53,8 +53,8 @@ async fn tail_waits_for_file_creation_then_delivers() {
     tokio::time::sleep(Duration::from_millis(700)).await;
     {
         let locked = state.lock().await;
-        assert_eq!(locked.log_phase.as_str(), "waiting");
-        assert!(!locked.log_tailing());
+        assert_eq!(locked.log_phase.to_string(), "waiting");
+        assert!(!locked.is_tailing());
         assert!(locked.last_log.contains("waiting for console.log"));
     }
 
@@ -63,8 +63,8 @@ async fn tail_waits_for_file_creation_then_delivers() {
     tokio::time::sleep(Duration::from_millis(700)).await;
     {
         let locked = state.lock().await;
-        assert_eq!(locked.log_phase.as_str(), "tailing");
-        assert!(locked.log_tailing());
+        assert_eq!(locked.log_phase.to_string(), "tailing");
+        assert!(locked.is_tailing());
     }
     // Stale history must not produce events; only new appends do.
     assert!(receiver.try_recv().is_err());

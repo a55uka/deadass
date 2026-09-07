@@ -8,39 +8,35 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     pub fn load(path: PathBuf) -> Self {
-        if let Some(current) = read_config(&path) {
+        if let Some(current) = parse_file(&path) {
             return Self { path, current };
         }
         let store = Self {
             path,
             current: AppConfig::default(),
         };
-        if !store.path.exists()
-            && let Err(error) = store.persist()
-        {
-            tracing::warn!(path = %store.path.display(), %error, "could not create default config");
-        }
+        store.create_default_file();
         store
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     pub fn get(&self) -> &AppConfig {
         &self.current
     }
 
-    pub fn update(&mut self, next: AppConfig) {
-        self.current = next;
+    fn create_default_file(&self) {
+        if self.path.exists() {
+            return;
+        }
+        if let Err(error) = self.persist() {
+            tracing::warn!(path = %self.path.display(), %error, "could not create default config");
+        }
     }
 
-    pub fn persist(&self) -> anyhow::Result<()> {
+    fn persist(&self) -> anyhow::Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let rendered = toml::to_string_pretty(&self.current)?;
-        std::fs::write(&self.path, rendered)?;
+        std::fs::write(&self.path, toml::to_string_pretty(&self.current)?)?;
         Ok(())
     }
 }
@@ -52,30 +48,28 @@ pub fn default_config_path() -> PathBuf {
         .join("config.toml")
 }
 
-fn read_config(path: &Path) -> Option<AppConfig> {
-    let raw = std::fs::read_to_string(path).ok()?;
-    toml::from_str(&raw).ok()
+fn parse_file(path: &Path) -> Option<AppConfig> {
+    toml::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn unique_path(tag: &str) -> PathBuf {
+    fn temp_config_path(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "deadass-config-{}-{}-{}.toml",
-            tag,
+            "deadass-config-{tag}-{}-{}.toml",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
+                .map(|nanos| nanos.as_nanos())
                 .unwrap_or(0)
         ))
     }
 
     #[test]
     fn load_creates_missing_file_with_defaults() {
-        let path = unique_path("missing");
+        let path = temp_config_path("missing");
         assert!(!path.exists());
 
         let store = ConfigStore::load(path.clone());
@@ -92,7 +86,7 @@ mod tests {
 
     #[test]
     fn load_does_not_overwrite_invalid_file() {
-        let path = unique_path("invalid");
+        let path = temp_config_path("invalid");
         std::fs::write(&path, "not valid toml [[[").unwrap();
 
         let store = ConfigStore::load(path.clone());

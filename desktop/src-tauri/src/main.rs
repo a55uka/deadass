@@ -6,10 +6,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
+    init_logging();
     tauri::Builder::default()
         .setup(|app| {
             let backend: Backend = Arc::new(tauri::async_runtime::block_on(async {
@@ -28,4 +25,10 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("deadass desktop failed to run");
+}
+
+fn init_logging() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 }

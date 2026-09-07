@@ -1,44 +1,36 @@
-use deadass_shared::{GameEvent, TriggerKind, now_ms};
-use std::collections::{HashMap, VecDeque};
+use crate::dedup::EventDeduplicator;
+use deadass_shared::GameEvent;
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
-#[derive(Debug, Clone)]
+const DEDUP_WINDOW: Duration = Duration::from_millis(200);
+const MIN_BROADCAST_BUFFER: usize = 16;
+
+#[derive(Clone, Copy)]
 pub struct BusMessage {
     pub event: GameEvent,
-    pub accepted: bool,
 }
 
 pub struct EventBus {
     inbound: mpsc::UnboundedSender<GameEvent>,
-    outbound: broadcast::Sender<BusMessage>,
 }
 
 impl EventBus {
     pub fn new(buffer: usize) -> (Self, EventIngress, EventOutlet) {
         let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
-        let (outbound_tx, _) = broadcast::channel(buffer.max(16));
+        let (outbound_tx, _) = broadcast::channel(buffer.max(MIN_BROADCAST_BUFFER));
         let bus = Self {
-            inbound: inbound_tx.clone(),
-            outbound: outbound_tx.clone(),
+            inbound: inbound_tx,
         };
         (
             bus,
-            EventIngress {
-                receiver: inbound_rx,
-                broadcaster: outbound_tx.clone(),
-            },
-            EventOutlet {
-                receiver: outbound_tx.subscribe(),
-            },
+            EventIngress::new(inbound_rx, outbound_tx.clone()),
+            EventOutlet::new(outbound_tx.subscribe()),
         )
     }
 
     pub fn sender(&self) -> mpsc::UnboundedSender<GameEvent> {
         self.inbound.clone()
-    }
-
-    pub fn subscribe(&self) -> broadcast::Receiver<BusMessage> {
-        self.outbound.subscribe()
     }
 }
 
@@ -48,16 +40,23 @@ pub struct EventIngress {
 }
 
 impl EventIngress {
+    fn new(
+        receiver: mpsc::UnboundedReceiver<GameEvent>,
+        broadcaster: broadcast::Sender<BusMessage>,
+    ) -> Self {
+        Self {
+            receiver,
+            broadcaster,
+        }
+    }
+
     pub async fn run(mut self) {
-        let mut dedup = EventDeduplicator::new(200);
+        let mut dedup = EventDeduplicator::new(DEDUP_WINDOW);
         while let Some(event) = self.receiver.recv().await {
             if !dedup.should_emit(event) {
                 continue;
             }
-            let _ = self.broadcaster.send(BusMessage {
-                event,
-                accepted: true,
-            });
+            let _ = self.broadcaster.send(BusMessage { event });
         }
     }
 }
@@ -67,81 +66,11 @@ pub struct EventOutlet {
 }
 
 impl EventOutlet {
+    fn new(receiver: broadcast::Receiver<BusMessage>) -> Self {
+        Self { receiver }
+    }
+
     pub async fn next(&mut self) -> Option<GameEvent> {
         self.receiver.recv().await.ok().map(|message| message.event)
-    }
-}
-
-pub struct EventDeduplicator {
-    window_ms: u64,
-    recent: VecDeque<(TriggerKind, u64)>,
-}
-
-impl EventDeduplicator {
-    pub fn new(window_ms: u64) -> Self {
-        Self {
-            window_ms,
-            recent: VecDeque::new(),
-        }
-    }
-
-    pub fn should_emit(&mut self, event: GameEvent) -> bool {
-        self.should_emit_at(TriggerKind::from_event(event.kind), now_ms())
-    }
-
-    fn should_emit_at(&mut self, trigger: TriggerKind, now: u64) -> bool {
-        self.recent
-            .retain(|(_, seen_at)| now.saturating_sub(*seen_at) <= self.window_ms);
-        if self.recent.iter().any(|(known, _)| *known == trigger) {
-            return false;
-        }
-        self.recent.push_back((trigger, now));
-        if self.recent.len() > 64 {
-            self.recent.pop_front();
-        }
-        true
-    }
-}
-
-#[allow(dead_code)]
-fn pending_triggers(events: &[GameEvent]) -> HashMap<TriggerKind, usize> {
-    let mut counts = HashMap::new();
-    for event in events {
-        *counts
-            .entry(TriggerKind::from_event(event.kind))
-            .or_insert(0) += 1;
-    }
-    counts
-}
-
-#[cfg(test)]
-mod deduplicator_collapses_arrival_bursts {
-    use super::*;
-    use deadass_shared::EventKind;
-
-    fn kill() -> GameEvent {
-        GameEvent::new(1, 0, EventKind::Kill)
-    }
-
-    #[test]
-    fn immediate_repeat_is_dropped() {
-        let mut dedup = EventDeduplicator::new(200);
-        assert!(dedup.should_emit_at(TriggerKind::Kill, 1000));
-        assert!(!dedup.should_emit_at(TriggerKind::Kill, 1100));
-    }
-
-    #[test]
-    fn repeat_after_window_passes() {
-        let mut dedup = EventDeduplicator::new(200);
-        assert!(dedup.should_emit_at(TriggerKind::Kill, 1000));
-        assert!(dedup.should_emit_at(TriggerKind::Kill, 1300));
-    }
-
-    #[test]
-    fn stale_sender_timestamp_does_not_suppress() {
-        let mut dedup = EventDeduplicator::new(200);
-        assert!(dedup.should_emit(kill()));
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        assert!(dedup.should_emit(kill()));
     }
 }
