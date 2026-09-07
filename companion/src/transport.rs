@@ -115,17 +115,6 @@ fn mode_accepts(mode: InputMode, event: GameEvent) -> bool {
     }
 }
 
-pub fn parse_newline_events(raw: &[u8]) -> Vec<GameEvent> {
-    raw.split(|byte| *byte == b'\n')
-        .filter_map(|line| {
-            if line.is_empty() {
-                return None;
-            }
-            serde_json::from_slice(line).ok()
-        })
-        .collect()
-}
-
 #[allow(dead_code)]
 fn pending_triggers(events: &[GameEvent]) -> HashMap<TriggerKind, usize> {
     let mut counts = HashMap::new();

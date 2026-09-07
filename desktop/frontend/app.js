@@ -10,8 +10,6 @@ async function refresh() {
   try {
     const status = await tauriCore.invoke("get_status");
     setDot("dot-mod", status.mod_active);
-    setDot("dot-dll", status.dll_active);
-    setDot("dot-external", status.external_active);
     document.getElementById("toy-mode").textContent = status.toy_mode;
     document.getElementById("devices").textContent =
       status.devices.length > 0 ? status.devices.join(", ") : "no devices";

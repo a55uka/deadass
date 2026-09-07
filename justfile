@@ -11,7 +11,6 @@
 #   just clean               # remove dist/ and CSDK build dirs
 #   just companion-run       # debug build + launch the companion
 #   just desktop-run        # launch the Tauri desktop UI
-#   just dll-build           # build the Windows fidelity DLL (see recipe)
 #
 # Override the CSDK location with `csdk=...` or $DEADLOCK_CSDK.
 # On Windows an empty value lets scripts/build.ps1 auto-detect the install.
@@ -68,10 +67,6 @@ desktop-run *args:
 # release build of the companion
 companion-release *args:
     cargo build --locked --release -p deadasss-companion {{args}}
-
-# build the fidelity DLL (native target; cross-compile to Windows with cargo-xwin)
-dll-build *args:
-    cargo build -p deadass-dll {{args}}
 
 # Rust test suite (whole workspace)
 rust-test *args:

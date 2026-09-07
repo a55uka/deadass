@@ -1,4 +1,4 @@
-use crate::servers::{DllTcpServer, ModHttpServer};
+use crate::servers::ModHttpServer;
 use crate::toys::{ConnectionMode, ToyDevice, ToyHub};
 use crate::transport::{EventBus, EventOutlet};
 use crate::ui::AppState;
@@ -24,14 +24,12 @@ pub fn start(config: AppConfig) -> Pipeline {
     let state = Arc::new(Mutex::new(AppState::new(config.clone())));
 
     tracing::info!(
-        dll_port = config.dll_tcp_port,
         mod_port = config.mod_http_port,
         toys = config.buttplug_ws_url,
         "pipeline starting"
     );
 
     tokio::spawn(ingress.run(config.input_mode));
-    tokio::spawn(DllTcpServer::new(config.dll_tcp_port, bus.sender()).run());
     tokio::spawn(ModHttpServer::new(config.mod_http_port, bus.sender()).run());
     spawn_log_tail(bus.sender(), state.clone());
     tokio::spawn(connect_toys(hub.clone(), state.clone()));

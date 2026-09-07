@@ -1253,14 +1253,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deadass-dll"
-version = "0.1.0"
-dependencies = [
- "deadass-shared",
- "serde_json",
-]
-
-[[package]]
 name = "deadass-shared"
 version = "0.1.0"
 dependencies = [
