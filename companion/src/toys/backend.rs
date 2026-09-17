@@ -40,8 +40,12 @@ impl ButtplugToyBackend {
             .map_err(|error| ToyError::Buttplug(error.to_string()))
     }
 
-    pub async fn play(&self, command: HapticCommand) {
-        let targets = self.vibrating_devices();
+    pub async fn play(&self, command: HapticCommand, target_names: &[String]) {
+        let targets: Vec<ButtplugClientDevice> = self
+            .vibrating_devices()
+            .into_iter()
+            .filter(|device| target_names.iter().any(|name| name == device.name()))
+            .collect();
         let strength = command.strength.clamp(0.0, 1.0);
         match command.pattern {
             Pattern::Vibrate => self.hold(&targets, strength, command.duration_ms).await,

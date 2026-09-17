@@ -8,7 +8,7 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     pub fn load(path: PathBuf) -> Self {
-        if let Some(current) = parse_file(&path) {
+        if let Some(current) = parse_file(&path).map(AppConfig::normalized) {
             return Self { path, current };
         }
         let store = Self {
@@ -23,6 +23,10 @@ impl ConfigStore {
         &self.current
     }
 
+    pub fn set(&mut self, config: AppConfig) {
+        self.current = config;
+    }
+
     fn create_default_file(&self) {
         if self.path.exists() {
             return;
@@ -32,7 +36,7 @@ impl ConfigStore {
         }
     }
 
-    fn persist(&self) -> anyhow::Result<()> {
+    pub fn persist(&self) -> anyhow::Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }

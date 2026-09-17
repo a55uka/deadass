@@ -14,8 +14,10 @@
     "windows": [
       {
         "title": "Deadass Companion",
-        "width": 900,
-        "height": 700
+        "width": 1000,
+        "height": 720,
+        "minWidth": 620,
+        "minHeight": 480
       }
     ]
   },

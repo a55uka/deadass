@@ -62,6 +62,10 @@ impl ToyHub {
         self.mode
     }
 
+    pub fn set_central_url(&mut self, url: String) {
+        self.central_url = url;
+    }
+
     pub fn devices(&self) -> Vec<ToyDevice> {
         self.backend
             .as_ref()
@@ -88,9 +92,9 @@ impl ToyHub {
         }
     }
 
-    pub async fn play(&self, command: HapticCommand) {
+    pub async fn play(&self, command: HapticCommand, target_names: &[String]) {
         if let Some(backend) = &self.backend {
-            backend.play(command).await;
+            backend.play(command, target_names).await;
         }
     }
 

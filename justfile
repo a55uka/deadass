@@ -9,6 +9,7 @@
 #   just build out.vpk       # build to a different path
 #   just pack                # pack dist/deadass.vpk without the CSDK (zip fallback)
 #   just clean               # remove dist/ and CSDK build dirs
+#   just dll-build           # build the injectable deadass_dll.dll
 #   just companion-run       # debug build + launch the companion
 #   just desktop-run        # launch the Tauri desktop UI
 #
@@ -67,6 +68,10 @@ desktop-run *args:
 # release build of the companion
 companion-release *args:
     cargo build --locked --release -p deadass-companion {{args}}
+
+# build the injectable DLL (target/<profile>/deadass-dll.dll)
+dll-build *args:
+    cargo build -p deadass-dll {{args}}
 
 # Rust test suite (whole workspace)
 rust-test *args:

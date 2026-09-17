@@ -1,6 +1,7 @@
 use crate::bridge::{ModSignal, parse_bridge_line};
+use crate::pipeline::SourceGate;
 use crate::ui::AppState;
-use deadass_shared::GameEvent;
+use deadass_shared::{DataSource, EventKind, GameEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,14 +14,16 @@ const READ_CHUNK: usize = 16 * 1024;
 pub struct LogTail {
     path: PathBuf,
     sender: mpsc::UnboundedSender<GameEvent>,
+    gate: SourceGate,
     state: Option<Arc<Mutex<AppState>>>,
 }
 
 impl LogTail {
-    pub fn new(path: PathBuf, sender: mpsc::UnboundedSender<GameEvent>) -> Self {
+    pub fn new(path: PathBuf, sender: mpsc::UnboundedSender<GameEvent>, gate: SourceGate) -> Self {
         Self {
             path,
             sender,
+            gate,
             state: None,
         }
     }
@@ -28,11 +31,13 @@ impl LogTail {
     pub fn with_state(
         path: PathBuf,
         sender: mpsc::UnboundedSender<GameEvent>,
+        gate: SourceGate,
         state: Arc<Mutex<AppState>>,
     ) -> Self {
         Self {
             path,
             sender,
+            gate,
             state: Some(state),
         }
     }
@@ -44,7 +49,7 @@ impl LogTail {
             if self.path.is_file() {
                 waiting_announced = false;
                 tail.baseline_once(&self.path, &self.state).await;
-                tail.drain_available(&self.path, &self.sender);
+                tail.drain_available(&self.path, &self.sender, &self.gate, &self.state).await;
                 tokio::time::sleep(TAIL_POLL).await;
             } else {
                 tail.reset();
@@ -104,7 +109,13 @@ impl TailCursor {
         }
     }
 
-    fn drain_available(&mut self, path: &PathBuf, sender: &mpsc::UnboundedSender<GameEvent>) {
+    async fn drain_available(
+        &mut self,
+        path: &PathBuf,
+        sender: &mpsc::UnboundedSender<GameEvent>,
+        gate: &SourceGate,
+        state: &Option<Arc<Mutex<AppState>>>,
+    ) {
         use std::io::{Read, Seek, SeekFrom};
         let mut file = match std::fs::File::open(path) {
             Ok(file) => file,
@@ -132,6 +143,13 @@ impl TailCursor {
                 if let Ok(text) = std::str::from_utf8(&line)
                     && let Some(ModSignal::Game(event)) = parse_bridge_line(text)
                 {
+                    let kill_feed = matches!(event.kind, EventKind::Kill | EventKind::Assist);
+                    if !gate.allows(DataSource::Mod) && !kill_feed {
+                        continue;
+                    }
+                    if gate.allows(DataSource::Mod) && let Some(state) = state {
+                        state.lock().await.sources.mark_mod_seen();
+                    }
                     let _ = sender.send(event);
                 }
             }

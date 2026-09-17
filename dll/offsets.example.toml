@@ -1,0 +1,57 @@
+# deadass-dll offset overrides.
+#
+# Copy this file to `deadass-offsets.toml` next to deadass_dll.dll (or point
+# $DEADASS_OFFSETS at it) after re-dumping Deadlock with dezlock-dump
+# (`dezlock-dump.exe --all`). Any key you omit falls back to the value baked
+# into the DLL.
+#
+# Offsets are strings with hex ("0x2E76FE8") or plain decimal numbers.
+
+[dll]
+# TCP port of the companion's DLL event server; must match
+# `dll_event_port` in the companion's config.toml (default 24680).
+# port = 24680
+# How often to sample game state, in milliseconds.
+# poll_interval_ms = 33
+
+[globals]
+# Addresses of schema globals inside client.dll, from dezlock's _globals.txt:
+#   C_CitadelPlayerPawn   @ client.dll+0x2F14178 (pointer)
+#   CGameEntitySystem     @ client.dll+0x30E68A0 (pointer)
+# local_pawn = "0x2F14178"
+# entity_system = "0x30E68A0"
+
+[entity_list]
+# Source 2 entity list layout: chunk pointer array at
+# entity_system + chunk_array, 512 entities per chunk, 0x70-byte slots
+# (identity structs whose first qword is the entity instance).
+# chunk_array = "0x10"
+# chunk_size = 512
+# stride = "0x70"
+
+[pawn]
+# C_CitadelPlayerPawn fields (from dezlock's _entity-paths.txt).
+# health = "0x354"
+# max_health = "0x350"
+# life_state = "0x35C"
+# team = "0x3F3"
+# sim_time = "0x3C0"                # m_flSimulationTime, the game clock
+# interrupt_state = "0x15B4"        # CCitadelAbilityComponent.m_bInInterruptState
+# controller_handle = "0x10B0"      # m_hController
+# ability_component = "0x14D0"      # embedded CCitadelAbilityComponent
+# abilities = "0x1538"              # m_vecAbilities (component + 0x68 in this build)
+
+[ability]
+# C_CitadelBaseAbility fields, plus the MeleeParry/HoldMelee specifics.
+# channeling = "0x740"
+# cooldown_start = "0x764"
+# cooldown_end = "0x768"
+# slot = "0x778"
+# charges = "0x780"
+# parry_start = "0x11DC"            # CCitadel_Ability_MeleeParry.m_flParryStartTime
+# attack_parried = "0x11E0"         # m_bAttackParried (a parry landed)
+# parry_success_end = "0x11E4"      # m_flParrySuccessEndTime
+# melee_state = "0x12F0"            # CCitadel_Ability_HoldMelee.m_eCurrentAttackState
+# melee_chain = "0x130C"            # m_nLightChainCount (light punches landed)
+# melee_slot = 22                   # ESlot_Weapon_Melee
+# max_slot = 22

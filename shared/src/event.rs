@@ -8,6 +8,10 @@ pub enum EventKind {
     Assist,
     AbilityUsed { slot: u8 },
     AbilityReady { slot: u8 },
+    Parry,
+    Parried,
+    PunchLanded,
+    PunchTaken,
     Respawn,
 }
 

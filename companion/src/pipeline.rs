@@ -1,17 +1,60 @@
+use crate::config_store::{ConfigStore, default_config_path};
+use crate::config_watch;
+use crate::dll_server::DllEventServer;
+use crate::injector;
 use crate::log_tail::LogTail;
+use crate::openshock::{ControlCommand, OpenShockClient};
 use crate::servers::ModEventServer;
 use crate::toys::{ConnectionMode, ToyDevice, ToyHub};
 use crate::transport::{EventBus, EventOutlet};
 use crate::ui::AppState;
-use crate::{ConfigStore, HapticGate, default_config_path, discover_console_log};
+use crate::{HapticGate, discover_console_log};
 use crate::{GateDecision, SuppressReason};
-use deadass_shared::{AppConfig, GameEvent, TriggerKind};
+use deadass_shared::{
+    resolve_vibrate_targets, AppConfig, DataSource, GameEvent, TriggerKind,
+};
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::sync::{Mutex, mpsc};
 
 pub struct Pipeline {
     pub hub: Arc<Mutex<ToyHub>>,
     pub state: Arc<Mutex<AppState>>,
+    pub source: SourceGate,
+    pub config_path: PathBuf,
+    pub openshock: Arc<OpenShockClient>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SourceGate(Arc<AtomicU8>);
+
+impl SourceGate {
+    pub fn new(source: DataSource) -> Self {
+        Self(Arc::new(AtomicU8::new(gate_value(source))))
+    }
+
+    pub fn get(&self) -> DataSource {
+        match self.0.load(Ordering::Relaxed) {
+            1 => DataSource::Dll,
+            _ => DataSource::Mod,
+        }
+    }
+
+    pub fn set(&self, source: DataSource) {
+        self.0.store(gate_value(source), Ordering::Relaxed);
+    }
+
+    pub fn allows(&self, source: DataSource) -> bool {
+        self.get() == source
+    }
+}
+
+fn gate_value(source: DataSource) -> u8 {
+    match source {
+        DataSource::Mod => 0,
+        DataSource::Dll => 1,
+    }
 }
 
 pub fn load_config() -> AppConfig {
@@ -22,27 +65,76 @@ pub fn start(config: AppConfig) -> Pipeline {
     let (bus, ingress, outlet) = EventBus::new(128);
     let hub = Arc::new(Mutex::new(ToyHub::new(config.buttplug_ws_url.clone())));
     let state = Arc::new(Mutex::new(AppState::new(config.clone())));
+    let gate = SourceGate::new(config.data_source);
 
     tracing::info!(
         mod_port = config.mod_http_port,
+        dll_port = config.dll_event_port,
+        source = config.data_source.as_str(),
         toys = config.buttplug_ws_url,
         "pipeline starting"
     );
 
     tokio::spawn(ingress.run());
-    tokio::spawn(ModEventServer::new(config.mod_http_port, bus.sender()).serve());
-    spawn_log_tail(bus.sender(), state.clone());
+    tokio::spawn(
+        ModEventServer::new(config.mod_http_port, bus.sender(), gate.clone(), state.clone())
+            .serve(),
+    );
+    spawn_log_tail(bus.sender(), gate.clone(), state.clone());
+    tokio::spawn(
+        DllEventServer::new(config.dll_event_port, bus.sender(), gate.clone(), state.clone())
+            .serve(),
+    );
+    injector::spawn_supervisor(
+        gate.clone(),
+        state.clone(),
+        injector::resolve_dll_path(&config),
+    );
     spawn_toy_autoconnect(hub.clone(), state.clone());
-    tokio::spawn(run_haptics(outlet, config, hub.clone(), state.clone()));
+    let openshock = std::sync::Arc::new(OpenShockClient::new());
+    tokio::spawn(run_haptics(outlet, openshock.clone(), hub.clone(), state.clone()));
+    config_watch::spawn(default_config_path(), state.clone());
 
-    Pipeline { hub, state }
+    Pipeline {
+        hub,
+        state,
+        source: gate,
+        config_path: default_config_path(),
+        openshock,
+    }
+}
+
+pub async fn edit_config(
+    pipeline: &Pipeline,
+    edit: impl FnOnce(&mut AppConfig),
+) -> AppConfig {
+    let mut config = pipeline.state.lock().await.config.clone();
+    edit(&mut config);
+    pipeline.state.lock().await.replace_config(config.clone());
+    let mut store = ConfigStore::load(pipeline.config_path.clone());
+    store.set(config.clone());
+    if let Err(error) = store.persist() {
+        tracing::warn!(%error, "could not persist config edit");
+    }
+    config
+}
+
+pub async fn set_source(pipeline: &Pipeline, source: DataSource) {
+    pipeline.source.set(source);
+    edit_config(pipeline, |config| config.data_source = source).await;
+    let mut state = pipeline.state.lock().await;
+    state.push_log(format!("game data source set to {}", source.as_str()));
 }
 
 pub async fn disconnect(hub: &Arc<Mutex<ToyHub>>) {
     hub.lock().await.disconnect().await;
 }
 
-fn spawn_log_tail(sender: mpsc::UnboundedSender<GameEvent>, state: Arc<Mutex<AppState>>) {
+fn spawn_log_tail(
+    sender: mpsc::UnboundedSender<GameEvent>,
+    gate: SourceGate,
+    state: Arc<Mutex<AppState>>,
+) {
     let Some(location) = discover_console_log() else {
         report_missing(
             &state,
@@ -56,7 +148,7 @@ fn spawn_log_tail(sender: mpsc::UnboundedSender<GameEvent>, state: Arc<Mutex<App
     } else {
         report_waiting(&state, path.clone(), waiting_hint(&path));
     }
-    tokio::spawn(LogTail::with_state(location.path, sender, state).run());
+    tokio::spawn(LogTail::with_state(location.path, sender, gate, state).run());
 }
 
 fn waiting_hint(path: &str) -> String {
@@ -146,40 +238,96 @@ impl Attached {
 
 async fn run_haptics(
     mut outlet: EventOutlet,
-    config: AppConfig,
+    openshock: Arc<OpenShockClient>,
     hub: Arc<Mutex<ToyHub>>,
     state: Arc<Mutex<AppState>>,
 ) {
     let mut gate = HapticGate::new();
     while let Some(event) = outlet.next().await {
         tracing::debug!(?event, "event accepted");
-        report_event(&state, &config, event).await;
+        let (config, debug_line) = {
+            let state = state.lock().await;
+            let config = state.config.clone();
+            let debug_line = config.debug_logging.then(|| {
+                format!(
+                    "event {} seq={} wall_ms={}",
+                    TriggerKind::from(event.kind),
+                    event.sequence,
+                    event.wall_time_ms,
+                )
+            });
+            (config, debug_line)
+        };
+        if let Some(line) = debug_line {
+            state.lock().await.push_log(line);
+        }
         match gate.decide(&config, event) {
             GateDecision::Fire(command) => {
-                hub.lock().await.play(command).await;
                 let trigger = TriggerKind::from(event.kind);
-                state.lock().await.push_log(format!(
-                    "vibrate {} strength={:.2} duration_ms={} pattern={:?}",
-                    trigger, command.strength, command.duration_ms, command.pattern,
-                ));
+                let rule = config.trigger(trigger);
+                // An empty vibrate_devices selection means every toy.
+                let vibrate_targets = {
+                    let connected = ToyDevice::names(&hub.lock().await.devices());
+                    resolve_vibrate_targets(rule.vibrate_devices.as_deref(), &connected)
+                };
+                if vibrate_targets.is_empty() {
+                    state.lock().await.push_log(format!(
+                        "vibrate {trigger}: skipped, no target toys selected or connected"
+                    ));
+                } else {
+                    state.lock().await.push_log(format!(
+                        "vibrate {} strength={:.2} duration_ms={} pattern={:?} toys={}",
+                        trigger,
+                        command.strength,
+                        command.duration_ms,
+                        command.pattern,
+                        vibrate_targets.len(),
+                    ));
+                    let vibrate_hub = Arc::clone(&hub);
+                    tokio::spawn(async move {
+                        vibrate_hub.lock().await.play(command, &vibrate_targets).await;
+                    });
+                }
+                
+                let shock = rule.shock.as_ref().and_then(ControlCommand::from_shock);
+                if let Some(shock) = shock {
+                    if OpenShockClient::configured(&config.openshock) {
+                        let selected = rule
+                            .shock
+                            .as_ref()
+                            .map(|shock| shock.target_ids(&config.openshock.shockers))
+                            .unwrap_or_default();
+                        let shocker_count = selected.len();
+                        let openshock = Arc::clone(&openshock);
+                        let openshock_config = config.openshock.clone();
+                        tokio::spawn(async move {
+                            if let Err(error) =
+                                openshock.control(&openshock_config, shock, &selected).await
+                            {
+                                tracing::warn!(%error, "openshock control failed");
+                            }
+                        });
+                        state.lock().await.push_log(format!(
+                            "shock {} intensity={} duration_ms={} kind={} shockers={}",
+                            trigger,
+                            shock.intensity,
+                            shock.duration_ms,
+                            shock.kind_str(),
+                            shocker_count,
+                        ));
+                    } else {
+                        state
+                            .lock()
+                            .await
+                            .push_log(String::from("openshock trigger hit but openshock is not configured"));
+                    }
+                }
             }
             GateDecision::Suppress(reason) if config.debug_logging => {
                 report_suppressed(&state, event, reason).await;
             }
             GateDecision::Suppress(_) => {}
         }
-    }
-}
-
-async fn report_event(state: &Arc<Mutex<AppState>>, config: &AppConfig, event: GameEvent) {
-    let mut state = state.lock().await;
-    state.mark_source_seen();
-    if config.debug_logging {
-        let trigger = TriggerKind::from(event.kind);
-        state.push_log(format!(
-            "event {} seq={} wall_ms={}",
-            trigger, event.sequence, event.wall_time_ms,
-        ));
     }
 }
 

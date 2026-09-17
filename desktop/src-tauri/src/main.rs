@@ -17,11 +17,16 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_status,
+            commands::set_data_source,
+            commands::set_trigger,
+            commands::set_config,
             commands::connect_embedded,
             commands::connect_central,
             commands::disconnect,
             commands::rescan,
             commands::test_fire,
+            commands::test_openshock,
+            commands::test_toys,
         ])
         .run(tauri::generate_context!())
         .expect("deadass desktop failed to run");

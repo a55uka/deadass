@@ -12,15 +12,77 @@ pub const MAX_LOG_LINES: usize = 200;
 #[derive(Debug, Clone, Default)]
 pub struct SourceStatus {
     pub mod_seen: Option<Instant>,
+    pub dll_seen: Option<Instant>,
 }
 
 impl SourceStatus {
-    pub fn is_live(&self) -> bool {
+    pub fn is_mod_live(&self) -> bool {
         self.mod_seen.is_some_and(|at| at.elapsed() < SOURCE_FRESH)
     }
 
-    pub fn mark_seen(&mut self) {
+    pub fn is_dll_live(&self) -> bool {
+        self.dll_seen.is_some_and(|at| at.elapsed() < SOURCE_FRESH)
+    }
+
+    pub fn mark_mod_seen(&mut self) {
         self.mod_seen = Some(Instant::now());
+    }
+
+    pub fn mark_dll_seen(&mut self) {
+        self.dll_seen = Some(Instant::now());
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum InjectPhase {
+    /// Mod source selected (or the DLL supervisor has nothing to report).
+    #[default]
+    Idle,
+    /// Dll source selected but deadlock.exe is not running.
+    WaitingForGame,
+    /// deadass-dll.dll is loaded in the game.
+    Injected,
+    /// The last injection attempt failed.
+    Failed,
+}
+
+impl fmt::Display for InjectPhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Idle => write!(f, "idle"),
+            Self::WaitingForGame => write!(f, "waiting for game"),
+            Self::Injected => write!(f, "injected"),
+            Self::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct InjectStatus {
+    pub phase: InjectPhase,
+    pub detail: Option<String>,
+}
+
+impl InjectStatus {
+    pub fn phase(phase: InjectPhase) -> Self {
+        Self {
+            phase,
+            detail: None,
+        }
+    }
+
+    pub fn detail(phase: InjectPhase, detail: impl Into<String>) -> Self {
+        Self {
+            phase,
+            detail: Some(detail.into()),
+        }
+    }
+
+    pub fn failed(detail: impl Into<String>) -> Self {
+        Self {
+            phase: InjectPhase::Failed,
+            detail: Some(detail.into()),
+        }
     }
 }
 
@@ -62,7 +124,10 @@ impl ToyStatus {
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub config: AppConfig,
+    /// Bumped whenever the config changes
+    pub config_rev: u64,
     pub sources: SourceStatus,
+    pub inject: InjectStatus,
     pub toys: ToyStatus,
     pub last_log: String,
     pub log_lines: VecDeque<String>,
@@ -74,7 +139,9 @@ impl AppState {
     pub fn new(config: AppConfig) -> Self {
         Self {
             config,
+            config_rev: 1,
             sources: SourceStatus::default(),
+            inject: InjectStatus::default(),
             toys: ToyStatus::disconnected(),
             last_log: String::from(INITIAL_LOG),
             log_lines: VecDeque::from([String::from(INITIAL_LOG)]),
@@ -82,9 +149,19 @@ impl AppState {
             log_path: None,
         }
     }
+    
+    pub fn replace_config(&mut self, config: AppConfig) -> AppConfig {
+        let previous = self.config.clone();
+        self.config = config;
+        self.config_rev = self.config_rev.wrapping_add(1);
+        previous
+    }
 
-    pub fn mark_source_seen(&mut self) {
-        self.sources.mark_seen();
+    pub fn set_inject(&mut self, phase: InjectPhase, detail: Option<String>) {
+        self.inject = InjectStatus {
+            phase,
+            detail,
+        };
     }
 
     pub fn set_toys(&mut self, mode: ConnectionMode, devices: &[ToyDevice]) {

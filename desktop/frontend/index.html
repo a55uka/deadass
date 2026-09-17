@@ -4,58 +4,242 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Deadass Companion</title>
+  <link rel="stylesheet" href="fonts.css" />
   <link rel="stylesheet" href="styles.css" />
+  <script src="demo.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
   <div class="app">
-    <header class="topbar">
-      <h1>Deadass Companion</h1>
-      <div class="top-actions">
-        <span id="trail-badge" class="status is-unknown" title="Checking console.log status…">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span id="trail-text">checking…</span>
-        </span>
-        <button id="btn-log-toggle" aria-expanded="false" aria-controls="log-card">Show log</button>
+    <nav class="rail" aria-label="Sections">
+      <div class="wordmark">
+        <span class="wordmark-name">deadass</span>
+        <span class="wordmark-sub">companion</span>
       </div>
-    </header>
 
-    <main>
-      <section>
-        <h2>Toys (<span id="toy-mode">disconnected</span>)</h2>
-        <div class="row">
-          <label>Backend
-            <select id="toy-backend">
-              <option value="embedded">Embedded</option>
-              <option value="central">External (Central)</option>
-            </select>
-          </label>
-          <button id="btn-connect">Connect</button>
-          <button id="btn-disconnect">Disconnect</button>
-          <button id="btn-rescan">Rescan</button>
+      <div class="rail-nav" id="nav">
+        <a class="nav-item" href="#home" aria-current="page">Home</a>
+        <a class="nav-item" href="#triggers">Triggers</a>
+        <a class="nav-item" href="#toys">Toys</a>
+        <a class="nav-item" href="#settings">Settings</a>
+        <a class="nav-item" href="#logs">Logs</a>
+      </div>
+
+      <div class="rail-foot">
+        <span class="status-dot" id="rail-dot" title="checking"></span>
+        <div class="rail-foot-text">
+          <span id="rail-line1">checking</span>
+          <span id="rail-line2" class="muted"></span>
+          <span id="rail-demo" class="demo-chip" hidden>preview data</span>
         </div>
-        <p id="devices">no devices</p>
-        <p id="toy-error" class="error" hidden></p>
+      </div>
+    </nav>
+
+    <main class="stage" id="stage">
+      <div id="command-error" class="command-error" hidden></div>
+
+      <!-- Home -->
+      <section class="view" data-panel="home">
+        <header class="view-head"><h1>Home</h1></header>
+
+        <div class="group">
+          <div class="group-head">
+            <h2>Game data</h2>
+            <span class="mono aux" id="home-source-pill"></span>
+          </div>
+          <div class="seg" id="source-seg" role="group" aria-label="Game data source">
+            <button class="seg-btn" data-source="mod">Mod</button>
+            <button class="seg-btn" data-source="dll">DLL</button>
+          </div>
+          <p class="muted note">The mod tails Deadlock's console.log and needs <span class="mono">-condebug</span>.
+            The DLL injects into the running game and reads memory; kill and assist still come from the mod.</p>
+          <p class="mono detail" id="home-source-detail"></p>
+        </div>
+
+        <div class="group">
+          <div class="group-head"><h2>Feedback</h2></div>
+          <p id="home-toys" class="note"></p>
+          <p id="home-toy-error" class="error" hidden></p>
+          <a class="btn" href="#toys">Manage toys</a>
+        </div>
+
+        <div class="group">
+          <div class="group-head"><h2>Recent activity</h2></div>
+          <pre class="log mono" id="home-log"></pre>
+          <a class="btn" href="#logs">All activity</a>
+        </div>
       </section>
 
-      <details>
-        <summary>Dev / testing</summary>
-        <div class="row">
-          <button data-fire="kill">Kill</button>
-          <button data-fire="death">Death</button>
-          <button data-fire="assist">Assist</button>
-          <button data-fire="respawn">Respawn</button>
-          <button data-fire="ability">Ability</button>
-          <button data-fire="ready">Ready</button>
-        </div>
-        <p class="muted">Sends a fake game event. Only needed while developing.</p>
-      </details>
-
-      <section id="log-card" hidden>
-        <h2>Log</h2>
-        <p class="muted mono" id="log-path"></p>
-        <pre id="log">waiting for deadlock</pre>
+      <!-- Triggers -->
+      <section class="view" data-panel="triggers" hidden>
+        <header class="view-head"><h1>Triggers</h1></header>
+        <p class="muted note">What the toy does when something happens in-game.
+          Changes apply immediately and save to config.toml.</p>
+        <div id="trigger-groups"></div>
       </section>
+
+      <!-- Toys -->
+      <section class="view" data-panel="toys" hidden>
+        <header class="view-head"><h1>Toys</h1></header>
+
+        <div class="group">
+          <div class="group-head"><h2>Buttplug.io</h2></div>
+          <div class="seg" id="toy-backend-seg" role="group" aria-label="Toy backend">
+            <button class="seg-btn" data-backend="embedded">Embedded</button>
+            <button class="seg-btn" data-backend="central">Intiface Central</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="btn-connect">Connect</button>
+            <button class="btn" id="btn-disconnect">Disconnect</button>
+            <button class="btn" id="btn-rescan">Rescan</button>
+            <button class="btn" id="btn-toys-test">Test</button>
+          </div>
+          <p class="muted note">Embedded runs the Bluetooth stack inside this app.
+            Intiface Central is a separate app; its address lives in Settings.</p>
+        </div>
+
+        <div class="group">
+          <div class="group-head">
+            <h2>Devices</h2>
+            <span class="mono aux" id="toys-count"></span>
+          </div>
+          <ul class="device-list" id="devices"></ul>
+          <p class="muted note" id="devices-empty" hidden>No devices yet. Connect a backend, then pair the toy.</p>
+          <p id="toy-error" class="error" hidden></p>
+        </div>
+
+        <div class="group">
+          <div class="group-head">
+            <h2>OpenShock</h2>
+            <span class="mono aux" id="cfg-openshock-state"></span>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label class="toggle-label" for="cfg-openshock-enabled">Enable OpenShock</label>
+              <p class="muted sub-note">Let triggers fire shocks through the OpenShock API.</p>
+            </div>
+            <label class="switch"><input type="checkbox" id="cfg-openshock-enabled" /><span class="track"></span></label>
+          </div>
+          <div class="field-row">
+            <label class="field field-grow" for="cfg-openshock-token">
+              <span class="field-label">API token</span>
+              <input type="password" id="cfg-openshock-token" class="mono-input" spellcheck="false"
+                     autocomplete="off" />
+            </label>
+            <label class="field" for="cfg-openshock-base-url">
+              <span class="field-label">Base URL</span>
+              <input type="text" id="cfg-openshock-base-url" class="mono-input" spellcheck="false"
+                     placeholder="https://api.openshock.app" />
+            </label>
+          </div>
+          <div class="field-row"><p class="muted sub-note">Token and URL save as soon as you leave the field.</p></div>
+          <div class="roster" id="openshock-roster"></div>
+          <div class="btn-row">
+            <button class="btn" id="btn-openshock-add" type="button">Add shocker</button>
+            <button class="btn btn-primary" id="btn-openshock-save" type="button">Save shockers</button>
+            <button class="btn" id="btn-openshock-test" type="button">Test</button>
+          </div>
+          <p class="muted note" id="cfg-openshock-hint">Shocker IDs are GUIDs — in the OpenShock app,
+            open the shocker and copy its ID. Pick which shockers each trigger fires in Triggers.</p>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section class="view" data-panel="settings" hidden>
+        <header class="view-head"><h1>Settings</h1></header>
+        <p class="muted note">Changes save to config.toml as you make them.
+          Edits made directly in the file reload here automatically.</p>
+
+        <div class="group">
+          <div class="group-head"><h2>Feedback</h2></div>
+          <div class="field-row">
+            <label class="field field-grow" for="cfg-master-gain">
+              <span class="field-label">Master gain</span>
+              <input type="range" id="cfg-master-gain" min="0" max="2" step="0.05" />
+            </label>
+            <output class="mono field-value" id="cfg-master-gain-out"></output>
+          </div>
+          <div class="field-row">
+            <label class="field field-grow" for="cfg-cap">
+              <span class="field-label">Strength cap</span>
+              <input type="range" id="cfg-cap" min="0" max="1" step="0.05" />
+            </label>
+            <output class="mono field-value" id="cfg-cap-out"></output>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label class="toggle-label" for="cfg-mute">Mute while dead</label>
+              <p class="muted sub-note">Stop vibrations between death and respawn.</p>
+            </div>
+            <label class="switch"><input type="checkbox" id="cfg-mute" /><span class="track"></span></label>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-head"><h2>Connections</h2></div>
+          <div class="field-row">
+            <label class="field" for="cfg-central-url">
+              <span class="field-label">Intiface websocket URL</span>
+              <input type="text" id="cfg-central-url" class="mono-input" spellcheck="false" />
+            </label>
+            <p class="muted sub-note">Used the next time you connect to Intiface Central.</p>
+          </div>
+          <div class="field-row">
+            <label class="field" for="cfg-dll-path">
+              <span class="field-label">DLL path</span>
+              <input type="text" id="cfg-dll-path" class="mono-input" spellcheck="false"
+                     placeholder="(next to the app)" />
+            </label>
+            <p class="muted sub-note">Where to find deadass_dll.dll for injection. Applied on restart.</p>
+          </div>
+          <div class="port-row">
+            <div class="field">
+              <span class="field-label" id="cfg-mod-port-label">Mod HTTP port</span>
+              <output class="mono port-value" id="cfg-mod-port" aria-labelledby="cfg-mod-port-label"></output>
+            </div>
+            <div class="field">
+              <span class="field-label" id="cfg-dll-port-label">DLL event port</span>
+              <output class="mono port-value" id="cfg-dll-port" aria-labelledby="cfg-dll-port-label"></output>
+            </div>
+            <p class="muted sub-note">Set in config.toml; applied on restart.</p>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-head"><h2>Diagnostics</h2></div>
+          <div class="toggle-row">
+            <div>
+              <label class="toggle-label" for="cfg-debug">Debug logging</label>
+              <p class="muted sub-note">Record every event and suppression in Logs.</p>
+            </div>
+            <label class="switch"><input type="checkbox" id="cfg-debug" /><span class="track"></span></label>
+          </div>
+        </div>
+
+
+        <div class="group">
+          <div class="group-head"><h2>Settings file</h2></div>
+          <p class="mono detail" id="config-path"></p>
+          <p class="muted sub-note">This file loads automatically when it changes on disk.</p>
+        </div>
+      </section>
+
+      <!-- Logs -->
+      <section class="view" data-panel="logs" hidden>
+        <header class="view-head"><h1>Logs</h1></header>
+
+        <div class="group">
+          <div class="group-head">
+            <h2>Activity</h2>
+            <div class="btn-row">
+              <button class="btn" id="btn-log-bottom" hidden>Jump to latest</button>
+              <button class="btn" id="btn-log-copy">Copy</button>
+            </div>
+          </div>
+          <pre class="log log-tall mono" id="log"></pre>
+        </div>
+      </section>
+
     </main>
   </div>
 </body>
