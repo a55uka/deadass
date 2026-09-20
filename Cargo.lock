@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "deadass-companion"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1271,7 +1271,7 @@ dependencies = [
 
 [[package]]
 name = "deadass-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "deadass-companion",
  "deadass-shared",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "deadass-dll"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "deadass-shared",
  "serde",
@@ -1296,10 +1296,9 @@ dependencies = [
 
 [[package]]
 name = "deadass-shared"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
- "serde_json",
  "toml 0.8.23",
 ]
 

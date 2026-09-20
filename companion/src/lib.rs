@@ -13,6 +13,7 @@ pub mod servers;
 pub mod toys;
 pub mod transport;
 pub mod ui;
+pub mod updater;
 
 pub use bridge::{BRIDGE_RECORD_PREFIX, BRIDGE_SCHEMA, ModSignal, parse_bridge_line};
 pub use config_store::{ConfigStore, default_config_path};
@@ -27,4 +28,5 @@ pub use pipeline::{
     Pipeline, SourceGate, disconnect, load_config, set_source, start,
 };
 pub use toys::{ConnectionMode, ToyDevice, ToyError, ToyHub};
+pub use updater::{apply_staged, GitHubClient, UpdateCheck};
 pub use transport::{EventBus, EventIngress, EventOutlet};

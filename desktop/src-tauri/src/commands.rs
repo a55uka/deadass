@@ -1,5 +1,6 @@
 use deadass_companion::haptics::HapticCommand;
 use deadass_companion::openshock::{ControlCommand, OpenShockClient};
+use deadass_companion::updater::{self, GitHubClient, UpdateCheck};
 use deadass_companion::pipeline::{self, Pipeline};
 use deadass_companion::toys::ToyDevice;
 use deadass_shared::{
@@ -188,6 +189,15 @@ pub struct StatusView {
     config: ConfigView,
     config_rev: u64,
     config_path: String,
+    app_version: String,
+    update: UpdateStatusView,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct UpdateStatusView {
+    checks_enabled: bool,
+    latest_version: Option<String>,
+    available: Option<String>,
 }
 
 async fn snapshot(backend: &Backend) -> StatusView {
@@ -214,6 +224,12 @@ async fn snapshot(backend: &Backend) -> StatusView {
         config: ConfigView::from_config(&state.config),
         config_rev: state.config_rev,
         config_path: backend.config_path.display().to_string(),
+        app_version: updater::CURRENT_VERSION.to_string(),
+        update: UpdateStatusView {
+            checks_enabled: state.config.updates.enabled,
+            latest_version: state.updates.latest_version.clone(),
+            available: state.updates.available.clone(),
+        },
     }
 }
 
@@ -444,6 +460,102 @@ pub async fn rescan(backend: State<'_, Backend>) -> Result<StatusView, String> {
         Err(error) => Err(error.to_string()),
     };
     Ok(finish_toy_action(&backend, outcome, "rescan").await)
+}
+
+#[tauri::command]
+pub async fn check_updates(backend: State<'_, Backend>) -> Result<StatusView, String> {
+    let (config, client) = {
+        let state = backend.state.lock().await;
+        (state.config.clone(), GitHubClient::new())
+    };
+    let release = client
+        .latest_release(&config.updates.repo)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut state = backend.state.lock().await;
+    state.updates.checked = true;
+    state.updates.latest_version = updater::version_tuple(&release.tag_name)
+        .map(|(major, minor, patch)| format!("{major}.{minor}.{patch}"));
+    match updater::compare(updater::CURRENT_VERSION, &release.tag_name) {
+        Some(UpdateCheck::Available { version }) => {
+            state.updates.available = Some(version.clone());
+        }
+        Some(UpdateCheck::UpToDate { version }) => {
+            state.updates.available = None;
+            let _ = version;
+        }
+        None => {}
+    }
+    drop(state);
+    Ok(snapshot(&backend).await)
+}
+
+#[tauri::command]
+pub async fn update_offsets_now(backend: State<'_, Backend>) -> Result<StatusView, String> {
+    let (config, client) = {
+        let state = backend.state.lock().await;
+        (state.config.clone(), GitHubClient::new())
+    };
+    let release = client
+        .latest_release(&config.updates.repo)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(asset) = updater::asset_by_name(&release, "deadass-offsets.toml") else {
+        return Err("release has no deadass-offsets.toml asset".into());
+    };
+    let app_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .unwrap_or_default();
+    let download = app_dir.join("deadass-offsets.toml.update");
+    client
+        .download(asset, &download)
+        .await
+        .map_err(|error| error.to_string())?;
+    let installed = updater::install_offsets(&download, config.dll_path.as_deref(), &app_dir)
+        .map_err(|error| error.to_string())?;
+    let line = format!(
+        "offsets updated: {}",
+        installed
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    backend.state.lock().await.push_log(line.clone());
+    Ok(snapshot(&backend).await)
+}
+
+#[tauri::command]
+pub async fn update_app_now(backend: State<'_, Backend>) -> Result<StatusView, String> {
+    let (config, client) = {
+        let state = backend.state.lock().await;
+        (state.config.clone(), GitHubClient::new())
+    };
+    let release = client
+        .latest_release(&config.updates.repo)
+        .await
+        .map_err(|error| error.to_string())?;
+    let app_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .unwrap_or_default();
+    for name in ["deadass-desktop.exe", "deadass_dll.dll", "deadass-companion.exe"] {
+        let Some(asset) = updater::asset_by_name(&release, name) else {
+            continue;
+        };
+        let download = app_dir.join(format!("{name}.update"));
+        client
+            .download(asset, &download)
+            .await
+            .map_err(|error| format!("download {name}: {error}"))?;
+    }
+    let line = format!(
+        "app update v{} staged — restart deadass to apply",
+        release.tag_name.trim_start_matches('v')
+    );
+    backend.state.lock().await.push_log(line);
+    Ok(snapshot(&backend).await)
 }
 
 #[tauri::command]

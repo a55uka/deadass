@@ -1,5 +1,5 @@
 #[cfg(windows)]
-pub use windows_impl::{client_base, snapshot};
+pub use windows_impl::{client_base, pages_committed, snapshot};
 
 use super::diff::{PawnSnapshot, PlayerSnapshot, Snapshot};
 use super::offsets::Offsets;
@@ -83,7 +83,7 @@ mod windows_impl {
     /// The game frees entity chunks and pawns during map transitions; a
     /// dangling pointer into released memory would otherwise fault and take
     /// the whole process down, so pages are verified before every read.
-    fn pages_committed(address: u64, len: usize) -> bool {
+    pub fn pages_committed(address: u64, len: usize) -> bool {
         use windows_sys::Win32::System::Memory::PAGE_GUARD;
         use windows_sys::Win32::System::Memory::PAGE_NOACCESS;
         use windows_sys::Win32::System::Threading::GetCurrentProcess;
@@ -203,6 +203,20 @@ mod windows_impl {
     }
 
     pub fn snapshot(offsets: &Offsets) -> Snapshot {
+        // One-shot sanity report on the configured entity-system global: a
+        // stale value (game patch) reads as an invalid entity system, and
+        // this logs that immediately instead of failing silently.
+        static GLOBAL_CHECKED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        if GLOBAL_CHECKED.get().is_none() {
+            let valid = entity_system_ptr(offsets).is_some();
+            let _ = GLOBAL_CHECKED.set(());
+            crate::debug_log::always(&format!(
+                "configured entity_system global {:#x} {}",
+                offsets.entity_system_global,
+                if valid { "valid" } else { "INVALID (stale? update deadass-offsets.toml)" }
+            ));
+        }
+
         let pawn = self_pawn(offsets);
         let players = pawn
             .as_ref()
@@ -216,10 +230,10 @@ mod windows_impl {
         if client == 0 {
             return None;
         }
-        let pawn = read_u64(client.checked_add(offsets.local_pawn_global)?)?;
-        if pawn == 0 || !entity_pointer_valid(pawn) {
-            return None;
-        }
+        let pawn = match read_u64(client.checked_add(offsets.local_pawn_global)?) {
+            Some(pawn) if pawn != 0 && entity_pointer_valid(pawn) => pawn,
+            _ => return None,
+        };
         let health = read_i32(pawn.checked_add(offsets.pawn_health)?)?;
         let life_state = read_u8(pawn.checked_add(offsets.pawn_life_state)?)?;
         let game_time = read_f32(pawn.checked_add(offsets.pawn_sim_time)?).unwrap_or(0.0);
@@ -240,6 +254,10 @@ mod windows_impl {
         })
     }
 
+    /// The configured entity-system global, structurally validated: the
+    /// referenced instance must be a client.dll object whose chunk pointer
+    /// array (inline at instance + chunk_array) dereferences to real
+    /// entities. A stale global after a game patch cannot fake that.
     fn entity_system_ptr(offsets: &Offsets) -> Option<u64> {
         let client = client_base();
         if client == 0 {
@@ -249,7 +267,20 @@ mod windows_impl {
         if entity_system == 0 || !entity_pointer_valid(entity_system) {
             return None;
         }
-        Some(entity_system)
+        let Some(chunk_array) =
+            read_u64(entity_system.checked_add(offsets.entity_chunk_array)?)
+        else {
+            return None;
+        };
+        if chunk_array == 0 || in_client_image(chunk_array) {
+            return None;
+        }
+        (0..16u64)
+            .any(|slot| {
+                read_u64(chunk_array + slot * offsets.entity_stride)
+                    .is_some_and(|entity| entity != 0 && entity_pointer_valid(entity))
+            })
+            .then_some(entity_system)
     }
 
     fn read_abilities(pawn: u64, offsets: &Offsets) -> Vec<super::super::diff::AbilitySnapshot> {

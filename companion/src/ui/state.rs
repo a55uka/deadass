@@ -121,9 +121,20 @@ impl ToyStatus {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct UpdateStatus {
+    /// GitHub was queried this session.
+    pub checked: bool,
+    /// Newest release version, when parsed.
+    pub latest_version: Option<String>,
+    /// Some(version) when a newer release exists.
+    pub available: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub config: AppConfig,
+    pub updates: UpdateStatus,
     /// Bumped whenever the config changes
     pub config_rev: u64,
     pub sources: SourceStatus,
@@ -139,6 +150,7 @@ impl AppState {
     pub fn new(config: AppConfig) -> Self {
         Self {
             config,
+            updates: UpdateStatus::default(),
             config_rev: 1,
             sources: SourceStatus::default(),
             inject: InjectStatus::default(),

@@ -27,6 +27,9 @@ fn main() {
             commands::test_fire,
             commands::test_openshock,
             commands::test_toys,
+            commands::check_updates,
+            commands::update_offsets_now,
+            commands::update_app_now,
         ])
         .run(tauri::generate_context!())
         .expect("deadass desktop failed to run");

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Deadass Companion</title>
+  <link rel="icon" type="image/png" href="logo.png" />
   <link rel="stylesheet" href="fonts.css" />
   <link rel="stylesheet" href="styles.css" />
   <script src="demo.js" defer></script>
@@ -13,7 +14,7 @@
   <div class="app">
     <nav class="rail" aria-label="Sections">
       <div class="wordmark">
-        <span class="wordmark-name">deadass</span>
+        <img class="wordmark-logo" src="logo.png" alt="deadass" />
         <span class="wordmark-sub">companion</span>
       </div>
 
@@ -41,6 +42,12 @@
       <!-- Home -->
       <section class="view" data-panel="home">
         <header class="view-head"><h1>Home</h1></header>
+
+        <div class="group" id="home-update" hidden>
+          <div class="group-head"><h2>Updates</h2></div>
+          <p class="mono detail" id="home-update-text"></p>
+          <a class="btn" href="#settings">Open settings</a>
+        </div>
 
         <div class="group">
           <div class="group-head">
@@ -203,6 +210,35 @@
             </div>
             <p class="muted sub-note">Set in config.toml; applied on restart.</p>
           </div>
+        </div>
+
+        <div class="group">
+          <div class="group-head"><h2>Updates</h2></div>
+          <div class="field-row">
+            <div class="field">
+              <span class="field-label">Running version</span>
+              <output class="mono field-value" id="upd-current">—</output>
+            </div>
+            <div class="field">
+              <span class="field-label">Latest release</span>
+              <output class="mono field-value" id="upd-latest">—</output>
+            </div>
+            <div class="field">
+              <span class="field-label">Status</span>
+              <output class="mono field-value" id="upd-status">not checked</output>
+            </div>
+          </div>
+          <div class="field-row">
+            <button class="btn" id="btn-upd-check" type="button">Check for updates</button>
+            <button class="btn" id="btn-upd-offsets" type="button">Update offsets</button>
+            <button class="btn" id="btn-upd-app" type="button">Update app</button>
+          </div>
+          <p class="muted sub-note">
+            "Update offsets" fetches the current schema toml from the latest
+            release and applies it immediately (takes effect on the next game
+            launch). "Update app" stages new binaries; restart deadass to
+            apply. Checks also run automatically in the background.
+          </p>
         </div>
 
         <div class="group">

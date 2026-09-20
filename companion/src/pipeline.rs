@@ -4,6 +4,7 @@ use crate::dll_server::DllEventServer;
 use crate::injector;
 use crate::log_tail::LogTail;
 use crate::openshock::{ControlCommand, OpenShockClient};
+use crate::updater::{self, GitHubClient, UpdateCheck};
 use crate::servers::ModEventServer;
 use crate::toys::{ConnectionMode, ToyDevice, ToyHub};
 use crate::transport::{EventBus, EventOutlet};
@@ -90,9 +91,24 @@ pub fn start(config: AppConfig) -> Pipeline {
         state.clone(),
         injector::resolve_dll_path(&config),
     );
+    // Swaps in any staged app updates from a previous session before
+    // anything locks the new binaries.
+    let applied = updater::apply_staged(&std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .unwrap_or_default());
+    if !applied.is_empty() {
+        let line = format!("applied staged updates: {}", applied.join(", "));
+        tracing::info!("{line}");
+        if let Ok(mut state) = state.try_lock() {
+            state.push_log(line);
+        }
+    }
+
     spawn_toy_autoconnect(hub.clone(), state.clone());
     let openshock = std::sync::Arc::new(OpenShockClient::new());
     tokio::spawn(run_haptics(outlet, openshock.clone(), hub.clone(), state.clone()));
+    tokio::spawn(run_update_checks(state.clone()));
     config_watch::spawn(default_config_path(), state.clone());
 
     Pipeline {
@@ -234,6 +250,125 @@ impl Attached {
             line: format!("no toy backend available: {error}"),
         }
     }
+}
+
+/// Cadence of the background update check.
+const UPDATE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Background updater: queries GitHub for a newer release, auto-installs a
+/// fresh deadass-offsets.toml, and pre-downloads (stages) new binaries so an
+/// app update is applied on the next restart — all without user interaction.
+async fn run_update_checks(state: Arc<Mutex<AppState>>) {
+    loop {
+        let config = state.lock().await.config.clone();
+        if config.updates.enabled {
+            if let Err(error) = run_update_cycle(&state, &config).await {
+                let line = format!("update check failed: {error}");
+                tracing::warn!("{line}");
+                state.lock().await.push_log(line);
+            }
+        }
+        tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
+    }
+}
+
+/// One background check cycle against the configured repository.
+async fn run_update_cycle(
+    state: &Arc<Mutex<AppState>>,
+    config: &AppConfig,
+) -> anyhow::Result<()> {
+    let http = GitHubClient::new();
+    let release = http.latest_release(&config.updates.repo).await?;
+
+    let app_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .unwrap_or_default();
+    {
+        let mut status = state.lock().await;
+        status.updates.checked = true;
+        status.updates.latest_version = updater::version_tuple(&release.tag_name)
+            .map(|(major, minor, patch)| format!("{major}.{minor}.{patch}"));
+    }
+
+    let Some(UpdateCheck::Available { version }) =
+        updater::compare(updater::CURRENT_VERSION, &release.tag_name)
+    else {
+        state.lock().await.updates.available = None;
+        return Ok(());
+    };
+
+    {
+        let mut status = state.lock().await;
+        status.updates.available = Some(version.clone());
+        status.push_log(format!(
+            "update available: v{version} (running v{}) — downloading in background",
+            updater::CURRENT_VERSION
+        ));
+    }
+
+    // Auto-install the offsets toml: safe schema data, applied on next game
+    // launch.
+    if config.updates.auto_update_offsets {
+        if let Some(asset) = updater::asset_by_name(&release, "deadass-offsets.toml") {
+            let download = app_dir.join("deadass-offsets.toml.update");
+            match http.download(asset, &download).await {
+                Ok(()) => match updater::install_offsets(
+                    &download,
+                    config.dll_path.as_deref(),
+                    &app_dir,
+                ) {
+                    Ok(paths) => {
+                        let line = format!(
+                            "offsets updated: {}",
+                            paths
+                                .iter()
+                                .map(|path| path.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        tracing::info!("{line}");
+                        state.lock().await.push_log(line);
+                    }
+                    Err(error) => {
+                        let line = format!("offsets update failed: {error}");
+                        tracing::warn!("{line}");
+                        state.lock().await.push_log(line);
+                    }
+                },
+                Err(error) => {
+                    let line = format!("offsets download failed: {error}");
+                    tracing::warn!("{line}");
+                    state.lock().await.push_log(line);
+                }
+            }
+        }
+    }
+
+    // Stage the new binaries in the background; apply_staged at the next
+    // startup swaps them in.
+    for name in ["deadass-desktop.exe", "deadass_dll.dll", "deadass-companion.exe"] {
+        let Some(asset) = updater::asset_by_name(&release, name) else {
+            continue;
+        };
+        let staged = app_dir.join(format!("{name}.update"));
+        if staged.exists() {
+            continue;
+        }
+        match http.download(asset, &staged).await {
+            Ok(()) => {
+                let line = format!("staged {name} for next restart");
+                tracing::info!("{line}");
+                state.lock().await.push_log(line);
+            }
+            Err(error) => {
+                let line = format!("staging {name} failed: {error}");
+                tracing::warn!("{line}");
+                state.lock().await.push_log(line);
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn run_haptics(

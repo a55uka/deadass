@@ -310,6 +310,27 @@ pub struct Shocker {
     pub name: String,
 }
 
+/// GitHub-release auto-update settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    /// Check GitHub for a newer release at startup.
+    pub enabled: bool,
+    /// "owner/name" of the repository to poll.
+    pub repo: String,
+    /// Automatically install a new deadass-offsets.toml (safe: schema data).
+    pub auto_update_offsets: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            repo: String::from("a55uka/deadass"),
+            auto_update_offsets: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpenShockConfig {
     pub enabled: bool,
@@ -348,6 +369,8 @@ pub struct AppConfig {
     pub debug_logging: bool,
     #[serde(default)]
     pub openshock: OpenShockConfig,
+    #[serde(default)]
+    pub updates: UpdateConfig,
     #[serde(default)]
     pub data_source: DataSource,
     #[serde(default = "default_dll_event_port")]
@@ -423,6 +446,7 @@ impl Default for AppConfig {
             buttplug_ws_url: String::from("ws://127.0.0.1:12345"),
             debug_logging: false,
             openshock: OpenShockConfig::default(),
+            updates: UpdateConfig::default(),
             data_source: DataSource::default(),
             dll_event_port: DEFAULT_DLL_EVENT_PORT,
             dll_path: None,

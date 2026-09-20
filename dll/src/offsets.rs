@@ -1,3 +1,18 @@
+//! Memory offsets for Deadlock's client.dll, dumped with dezlock-dump.
+//!
+//! The two patch-moving GLOBALS (local pawn, entity system) are baked here
+//! and pinned via a `[globals]` section in deadass-offsets.toml — update
+//! them after a game patch with `scripts/gen_offsets.py` (from a dezlock
+//! dump) or `scripts/refresh_globals.py` (live). `entity_system_ptr`
+//! structurally validates the configured global each session and logs when
+//! it has gone stale.
+//!
+//! The struct FIELD offsets (health, cooldowns, …) come from the game's own
+//! RUNTIME SCHEMA (see `schema`): resolved by class/field name at startup,
+//! so they track whatever build is running. The baked values below are only
+//! the fallback for when the schema system is unreachable, and an explicit
+//! `deadass-offsets.toml` always wins over both.
+
 use serde::Deserialize;
 
 pub const DEFAULT_DLL_PORT: u16 = 24680;
@@ -63,6 +78,9 @@ pub struct Offsets {
     /// Highest ability slot tracked for parry detection (slots beyond the
     /// four hero keys: melee, parry, etc.).
     pub max_ability_slot: u8,
+    /// Runtime state (not configurable): true once the game's schema system
+    /// has supplied field offsets for this session.
+    pub schema_resolved: bool,
     /// CCitadelPlayerController embedded PlayerDataGlobal offset, plus the
     /// scoreboard fields inside it (all networked for every player).
     pub controller_player_data: u64,
@@ -79,17 +97,11 @@ pub struct Offsets {
 
 impl Default for Offsets {
     fn default() -> Self {
-        // Current Deadlock build — dezlock-dump globals live-verified on
-        // 2026-09-13: the local pawn global read back health=414/max=882/
-        // life_state=0 while the player was alive in a match, and both entity
-        // system globals (dezlock's and the pattern-scanned dwEntityList at
-        // 0x391EDA8) resolve to the same live instance. Entity list stride is
-        // 0x70 in this build (not the classic 0x78).
         Self {
             dll_port: DEFAULT_DLL_PORT,
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            local_pawn_global: 0x2F14178,
-            entity_system_global: 0x30E68A0,
+            local_pawn_global: 0x2f193f8,
+            entity_system_global: 0x30ebdc8,
             entity_chunk_array: 0x10,
             entity_chunk_size: 512,
             entity_stride: 0x70,
@@ -115,6 +127,7 @@ impl Default for Offsets {
             ability_melee_chain: 0x130C,
             melee_slot: 22,
             max_ability_slot: 22,
+            schema_resolved: false,
             controller_player_data: 0x8F0,
             controller_pawn_handle: 0x6BC,
             player_health: 0x50,
@@ -248,6 +261,14 @@ impl Offsets {
     /// 2. `deadass-offsets.toml` next to this DLL
     pub fn load() -> Self {
         let mut offsets = Self::default();
+        // Field offsets from the game's own schema system (patch-proof);
+        // fails harmlessly until schemasystem.dll/client.dll are loaded, in
+        // which case the poller retries. The toml overlay runs AFTER, so an
+        // explicit pin always wins.
+        #[cfg(windows)]
+        {
+            offsets.schema_resolved = crate::schema::apply_schema(&mut offsets);
+        }
         if let Some(path) = override_path() {
             match std::fs::read_to_string(&path) {
                 Ok(raw) => {

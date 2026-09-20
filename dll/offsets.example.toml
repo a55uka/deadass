@@ -1,9 +1,10 @@
 # deadass-dll offset overrides.
 #
 # Copy this file to `deadass-offsets.toml` next to deadass_dll.dll (or point
-# $DEADASS_OFFSETS at it) after re-dumping Deadlock with dezlock-dump
-# (`dezlock-dump.exe --all`). Any key you omit falls back to the value baked
-# into the DLL.
+# $DEADASS_OFFSETS at it). Precedence for field offsets: baked defaults ->
+# the game's RUNTIME SCHEMA (automatic) -> this file (explicit pin wins).
+# Pinning is rarely needed: the schema tracks game patches by itself, and
+# globals must be updated after every game patch (see the scripts/ folder).
 #
 # Offsets are strings with hex ("0x2E76FE8") or plain decimal numbers.
 
@@ -15,11 +16,16 @@
 # poll_interval_ms = 33
 
 [globals]
-# Addresses of schema globals inside client.dll, from dezlock's _globals.txt:
-#   C_CitadelPlayerPawn   @ client.dll+0x2F14178 (pointer)
-#   CGameEntitySystem     @ client.dll+0x30E68A0 (pointer)
-# local_pawn = "0x2F14178"
-# entity_system = "0x30E68A0"
+# Addresses of the schema globals inside client.dll.
+#
+# Current values (update after game patches — check the debug log: a stale
+# global logs as INVALID on startup):
+#   C_CitadelPlayerPawn   @ client.dll+0x2F193F8 (pointer, 2026-09-20 build)
+#   CGameEntitySystem     @ client.dll+0x30EBDC8 (pointer, 2026-09-20 build)
+# local_pawn = "0x2F193F8"
+# entity_system = "0x30EBDC8"
+# local_pawn = "0x2F194F8"
+# entity_system = "0x30EBEC0"
 
 [entity_list]
 # Source 2 entity list layout: chunk pointer array at

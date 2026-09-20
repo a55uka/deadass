@@ -16,8 +16,14 @@ pub fn spawn_poller() {
     std::thread::spawn(poll_loop);
 }
 
+/// Retry the schema-backed offset load every N ticks (~1s) until it
+/// succeeds or attempts run out; schema needs client.dll loaded, which lags
+/// injection.
+const SCHEMA_RETRY_TICKS: u64 = 30;
+const SCHEMA_RETRY_MAX: u32 = 20;
+
 fn poll_loop() {
-    let offsets = Offsets::load();
+    let mut offsets = Offsets::load();
     let sender = EventSender::new(offsets.dll_port);
     let interval = Duration::from_millis(offsets.poll_interval_ms);
     let mut monitor = Monitor::new();
@@ -31,13 +37,32 @@ fn poll_loop() {
     let mut client_announced = false;
     let mut pawn_seen: Option<u64> = None;
     let mut players_log = String::new();
+    let mut tick: u64 = 0;
+    let mut schema_attempts: u32 = 1; // Offsets::load already tried once
     loop {
         std::thread::sleep(interval);
+        tick += 1;
         if !client_announced {
             let base = super::game::client_base();
             if base != 0 {
                 debug_log::log(&format!("client.dll found at {base:#x}"));
                 client_announced = true;
+            }
+        }
+
+        // The schema system only exists once the game is up; reload (which
+        // re-applies the toml overlay on top) until it resolves the fields.
+        #[cfg(windows)]
+        if !offsets.schema_resolved
+            && tick % SCHEMA_RETRY_TICKS == 0
+            && schema_attempts < SCHEMA_RETRY_MAX
+        {
+            schema_attempts += 1;
+            let fresh = Offsets::load();
+            if fresh.schema_resolved {
+                debug_log::log("schema offsets applied on retry");
+                offsets = fresh;
+                monitor.set_melee_slot(offsets.melee_slot);
             }
         }
 

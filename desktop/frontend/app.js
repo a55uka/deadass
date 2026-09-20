@@ -48,6 +48,12 @@ const els = {
   log: document.getElementById("log"),
   btnLogCopy: document.getElementById("btn-log-copy"),
   btnLogBottom: document.getElementById("btn-log-bottom"),
+  updCurrent: document.getElementById("upd-current"),
+  updLatest: document.getElementById("upd-latest"),
+  updStatus: document.getElementById("upd-status"),
+  btnUpdCheck: document.getElementById("btn-upd-check"),
+  btnUpdOffsets: document.getElementById("btn-upd-offsets"),
+  btnUpdApp: document.getElementById("btn-upd-app"),
 };
 
 const TRIGGER_GROUPS = [
@@ -724,6 +730,7 @@ function renderAll() {
   renderTriggers();
   renderToys();
   renderConfig();
+  renderUpdates();
   renderLogs();
   flashOnFire();
 }
@@ -752,6 +759,40 @@ function routeFromHash() {
   const raw = location.hash.slice(1) || "home";
   // Older builds called the settings view "config".
   showView(raw === "config" ? "settings" : raw);
+}
+
+/* ---------- render: updates ---------- */
+
+function renderUpdates() {
+  // Every element is optional: a missing section in the markup must never
+  // break the render chain (that is what broke tab switching).
+  const update = status?.update ?? {};
+  const available = update.available;
+  const latest = update.latest_version;
+
+  if (els.updCurrent) {
+    els.updCurrent.textContent = `v${status?.app_version ?? "?"}`;
+  }
+  if (els.updLatest) {
+    els.updLatest.textContent = latest ? `v${latest}` : "not checked";
+  }
+  if (els.updStatus) {
+    els.updStatus.textContent = available
+      ? `update available: v${available}`
+      : latest
+        ? "up to date"
+        : "not checked";
+  }
+  if (els.homeUpdate) {
+    const lines = [];
+    if (available) {
+      lines.push(`Update available: v${available} — restart deadass to apply a staged update.`);
+    } else if (latest) {
+      lines.push(`Up to date (v${status?.app_version ?? "?"}).`);
+    }
+    els.homeUpdate.hidden = lines.length === 0;
+    els.homeUpdateText.textContent = lines.join(" ");
+  }
 }
 
 /* ---------- bindings ---------- */
@@ -787,6 +828,20 @@ function bindStatic() {
   els.cfgDebug.addEventListener("change", () => run("set_config", { debug_logging: els.cfgDebug.checked }, [els.cfgDebug]));
   els.cfgUrl.addEventListener("change", () => run("set_config", { buttplug_ws_url: els.cfgUrl.value }, [els.cfgUrl]));
   els.cfgDllPath.addEventListener("change", () => run("set_config", { dll_path: els.cfgDllPath.value }, [els.cfgDllPath]));
+  if (els.btnUpdCheck) {
+    els.btnUpdCheck.addEventListener("click", () => run("check_updates", {}, [els.btnUpdCheck]));
+  }
+  if (els.btnUpdOffsets) {
+    els.btnUpdOffsets.addEventListener("click", () => run("update_offsets_now", {}, [els.btnUpdOffsets]));
+  }
+  if (els.btnUpdApp) {
+    els.btnUpdApp.addEventListener("click", () => run("update_app_now", {}, [els.btnUpdApp]));
+  }
+  els.btnUpdCheck.addEventListener("click", () => run("check_updates", {}, [els.btnUpdCheck]));
+  els.btnUpdOffsets.addEventListener("click", () => run("update_offsets_now", {}, [els.btnUpdOffsets]));
+  els.btnUpdApp.addEventListener("click", () => {
+    run("update_app_now", {}, [els.btnUpdApp]);
+  });
   els.cfgOsEnabled.addEventListener("change", () => run("set_config", { openshock_enabled: els.cfgOsEnabled.checked }, [els.cfgOsEnabled]));
   els.cfgOsToken.addEventListener("change", () => run("set_config", { openshock_api_token: els.cfgOsToken.value }, [els.cfgOsToken]));
   els.cfgOsBaseUrl.addEventListener("change", () => run("set_config", { openshock_base_url: els.cfgOsBaseUrl.value }, [els.cfgOsBaseUrl]));

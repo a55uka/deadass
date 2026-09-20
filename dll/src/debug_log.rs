@@ -17,19 +17,44 @@ fn sink() -> Option<&'static Mutex<std::fs::File>> {
         if !env_on && !file_on {
             return None;
         }
-        let path = dir.join("deadass_dll.log");
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .ok()
-            .map(Mutex::new)
+        open_sink()
     })
     .as_ref()
 }
 
+/// The gated sink caches its disabled state, so unconditional logging uses
+/// its own slot; both append to the same file.
+static FORCED: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+
+fn force_sink() -> Option<&'static Mutex<std::fs::File>> {
+    FORCED.get_or_init(open_sink).as_ref()
+}
+
+fn open_sink() -> Option<Mutex<std::fs::File>> {
+    let dir = super::offsets::dll_directory().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let path = dir.join("deadass_dll.log");
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()
+        .map(Mutex::new)
+}
+
+/// Marker-gated logging (chatty, per-tick diagnostics).
 pub fn log(line: &str) {
-    let Some(file) = sink() else {
+    write(sink(), line);
+}
+
+/// Unconditional logging for one-shot session diagnostics (scan results,
+/// schema outcomes) — always lands in deadass_dll.log next to the DLL, no
+/// marker file needed.
+pub fn always(line: &str) {
+    write(force_sink(), line);
+}
+
+fn write(sink: Option<&'static Mutex<std::fs::File>>, line: &str) {
+    let Some(file) = sink else {
         return;
     };
     let Ok(mut handle) = file.lock() else {

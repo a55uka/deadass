@@ -2,6 +2,7 @@ mod debug_log;
 mod diff;
 mod game;
 mod offsets;
+mod schema;
 mod sender;
 
 #[cfg(windows)]
