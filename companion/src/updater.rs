@@ -1,29 +1,10 @@
-//! Self-updating via GitHub releases.
-//!
-//! Release convention for `a55uka/deadass`: one release per version, tag
-//! `v<major>.<minor>.<patch>` matching the workspace version, with flat
-//! assets:
-//!
-//!   deadass-desktop.exe      the Tauri UI (also drives the pipeline)
-//!   deadass-companion.exe    headless pipeline host
-//!   deadass_dll.dll          the injectable reader
-//!   deadass-offsets.toml     current schema offsets
-//!
-//! Flow:
-//!   * `latest_release`  — GitHub API query + version compare (safe, cheap).
-//!   * `update_offsets`  — download the toml asset next to the DLL; the DLL
-//!                         re-reads offsets on its next injection, so no
-//!                         restart of anything is required beyond that.
-//!   * `stage_app`       — download exe/dll assets as `*.update` files next
-//!                         to the running app. Swapping happens on the next
-//!                         start via [`apply_staged`], because Windows locks
-//!                         running executables and DLLs loaded by the game.
-//!   * `apply_staged`    — called at pipeline startup before anything locks
-//!                         files: move `*.update` over their targets, keep
-//!                         the superseded binaries as `*.old` for one cycle.
-
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Mutex;
+
+use crate::ui::AppState;
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_REPO: &str = "a55uka/deadass";
@@ -31,8 +12,13 @@ pub const DEFAULT_REPO: &str = "a55uka/deadass";
 const GITHUB_API: &str = "https://api.github.com";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
-
-use std::time::Duration;
+const CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
+pub const BINARY_ASSETS: &[&str] = &[
+    "deadass-desktop.exe",
+    "deadass_dll.dll",
+    "deadass-companion.exe",
+];
+const OFFSETS_ASSET: &str = "deadass-offsets.toml";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Release {
@@ -109,11 +95,7 @@ impl GitHubClient {
         Ok(response.json::<Release>().await?)
     }
 
-    pub async fn download(
-        &self,
-        asset: &ReleaseAsset,
-        destination: &Path,
-    ) -> anyhow::Result<()> {
+    pub async fn download(&self, asset: &ReleaseAsset, destination: &Path) -> anyhow::Result<()> {
         let response = self
             .http
             .get(&asset.browser_download_url)
@@ -144,6 +126,13 @@ impl Default for GitHubClient {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub fn app_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .unwrap_or_default()
 }
 
 pub fn stage(download_path: &Path, target: &Path) -> anyhow::Result<PathBuf> {
@@ -206,10 +195,10 @@ pub fn install_offsets(
     app_dir: &Path,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let mut installed = Vec::new();
-    let mut destinations = vec![app_dir.join("deadass-offsets.toml")];
+    let mut destinations = vec![app_dir.join(OFFSETS_ASSET)];
     let dll_dir = dll_directory(config_dll_path, app_dir);
     if dll_dir != app_dir {
-        destinations.push(dll_dir.join("deadass-offsets.toml"));
+        destinations.push(dll_dir.join(OFFSETS_ASSET));
     }
     let contents = std::fs::read(download_path)?;
     for destination in destinations {
@@ -224,6 +213,124 @@ pub fn install_offsets(
     }
     std::fs::remove_file(download_path).ok();
     Ok(installed)
+}
+
+pub fn spawn_checks(state: Arc<Mutex<AppState>>) {
+    tokio::spawn(run_checks(state));
+}
+
+async fn run_checks(state: Arc<Mutex<AppState>>) {
+    loop {
+        let config = state.lock().await.config.clone();
+        if config.updates.enabled
+            && let Err(error) = run_check_cycle(&state, &config).await
+        {
+            let line = format!("update check failed: {error}");
+            tracing::warn!("{line}");
+            state.lock().await.push_log(line);
+        }
+        tokio::time::sleep(CHECK_INTERVAL).await;
+    }
+}
+
+async fn run_check_cycle(
+    state: &Arc<Mutex<AppState>>,
+    config: &deadass_shared::AppConfig,
+) -> anyhow::Result<()> {
+    let http = GitHubClient::new();
+    let release = http.latest_release(&config.updates.repo).await?;
+    let dir = app_dir();
+
+    {
+        let mut status = state.lock().await;
+        status.updates.checked = true;
+        status.updates.latest_version = version_tuple(&release.tag_name)
+            .map(|(major, minor, patch)| format!("{major}.{minor}.{patch}"));
+    }
+
+    let Some(UpdateCheck::Available { version }) = compare(CURRENT_VERSION, &release.tag_name)
+    else {
+        state.lock().await.updates.available = None;
+        return Ok(());
+    };
+
+    {
+        let mut status = state.lock().await;
+        status.updates.available = Some(version.clone());
+        status.push_log(format!(
+            "update available: v{version} (running v{}) — downloading in background",
+            CURRENT_VERSION
+        ));
+    }
+
+    if config.updates.auto_update_offsets {
+        update_offsets(&http, state, config, &release, &dir).await;
+    }
+    stage_binaries(&http, state, &release, &dir).await;
+    Ok(())
+}
+
+async fn update_offsets(
+    http: &GitHubClient,
+    state: &Arc<Mutex<AppState>>,
+    config: &deadass_shared::AppConfig,
+    release: &Release,
+    dir: &Path,
+) {
+    let Some(asset) = asset_by_name(release, OFFSETS_ASSET) else {
+        return;
+    };
+    let download = dir.join(format!("{OFFSETS_ASSET}.update"));
+    let outcome = match http.download(asset, &download).await {
+        Ok(()) => match install_offsets(&download, config.dll_path.as_deref(), dir) {
+            Ok(paths) => Ok(format!(
+                "offsets updated: {}",
+                paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            Err(error) => Err(format!("offsets update failed: {error}")),
+        },
+        Err(error) => Err(format!("offsets download failed: {error}")),
+    };
+    report(state, outcome).await;
+}
+
+async fn stage_binaries(
+    http: &GitHubClient,
+    state: &Arc<Mutex<AppState>>,
+    release: &Release,
+    dir: &Path,
+) {
+    for name in BINARY_ASSETS {
+        let Some(asset) = asset_by_name(release, name) else {
+            continue;
+        };
+        let staged = dir.join(format!("{name}.update"));
+        if staged.exists() {
+            continue;
+        }
+        let outcome = match http.download(asset, &staged).await {
+            Ok(()) => Ok(format!("staged {name} for next restart")),
+            Err(error) => Err(format!("staging {name} failed: {error}")),
+        };
+        report(state, outcome).await;
+    }
+}
+
+async fn report(state: &Arc<Mutex<AppState>>, outcome: Result<String, String>) {
+    match outcome {
+        Ok(line) => {
+            tracing::info!("{line}");
+            state.lock().await.push_log(line);
+        }
+        Err(line) => {
+            tracing::warn!("{line}");
+            state.lock().await.push_log(line);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -270,9 +377,12 @@ mod tests {
         std::fs::write(dir.join("deadass_dll.dll.update"), b"new").unwrap();
 
         let applied = apply_staged(&dir);
-        assert_eq!(applied, vec!["deadass_dll".to_string()]);
+        assert_eq!(applied, vec!["deadass_dll.dll".to_string()]);
         assert_eq!(std::fs::read(dir.join("deadass_dll.dll")).unwrap(), b"new");
-        assert_eq!(std::fs::read(dir.join("deadass_dll.dll.old")).unwrap(), b"old");
+        assert_eq!(
+            std::fs::read(dir.join("deadass_dll.dll.old")).unwrap(),
+            b"old"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

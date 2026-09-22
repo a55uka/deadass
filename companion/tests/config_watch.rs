@@ -17,10 +17,7 @@ fn temp_config_path(tag: &str) -> PathBuf {
     ))
 }
 
-async fn wait_for(
-    condition: impl Fn(&AppState) -> bool,
-    state: &Arc<Mutex<AppState>>,
-) -> bool {
+async fn wait_for(condition: impl Fn(&AppState) -> bool, state: &Arc<Mutex<AppState>>) -> bool {
     for _ in 0..40 {
         // Lock and drop each iteration so the watcher can write in between.
         if condition(&*state.lock().await) {
@@ -45,7 +42,11 @@ fn force_mtime_change(path: &PathBuf) {
 #[tokio::test]
 async fn watcher_reloads_edited_file() {
     let path = temp_config_path("reload");
-    std::fs::write(&path, toml::to_string_pretty(&AppConfig::default()).unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        toml::to_string_pretty(&AppConfig::default()).unwrap(),
+    )
+    .unwrap();
 
     let state = Arc::new(tokio::sync::Mutex::new(AppState::new(AppConfig::default())));
     let handle = config_watch::spawn(path.clone(), state.clone());
@@ -77,7 +78,11 @@ async fn watcher_reloads_edited_file() {
 #[tokio::test]
 async fn watcher_keeps_running_config_on_invalid_file() {
     let path = temp_config_path("invalid");
-    std::fs::write(&path, toml::to_string_pretty(&AppConfig::default()).unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        toml::to_string_pretty(&AppConfig::default()).unwrap(),
+    )
+    .unwrap();
 
     let state = Arc::new(tokio::sync::Mutex::new(AppState::new(AppConfig::default())));
     let handle = config_watch::spawn(path.clone(), state.clone());
@@ -105,17 +110,28 @@ async fn watcher_keeps_running_config_on_invalid_file() {
 #[tokio::test]
 async fn watcher_skips_identical_config() {
     let path = temp_config_path("identical");
-    std::fs::write(&path, toml::to_string_pretty(&AppConfig::default()).unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        toml::to_string_pretty(&AppConfig::default()).unwrap(),
+    )
+    .unwrap();
 
     let state = Arc::new(tokio::sync::Mutex::new(AppState::new(AppConfig::default())));
     let handle = config_watch::spawn(path.clone(), state.clone());
 
     // Rewrite the same content: mtime moves but nothing changed.
-    std::fs::write(&path, toml::to_string_pretty(&AppConfig::default()).unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        toml::to_string_pretty(&AppConfig::default()).unwrap(),
+    )
+    .unwrap();
     tokio::time::sleep(Duration::from_millis(1200)).await;
 
     let locked = state.lock().await;
-    assert_eq!(locked.config_rev, 1, "identical config does not bump the rev");
+    assert_eq!(
+        locked.config_rev, 1,
+        "identical config does not bump the rev"
+    );
     assert!(
         !locked
             .log_lines

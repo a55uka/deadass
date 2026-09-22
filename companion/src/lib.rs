@@ -2,6 +2,7 @@ pub mod bridge;
 pub mod config_store;
 pub mod config_watch;
 pub mod dedup;
+pub mod dispatch;
 pub mod dll_server;
 pub mod game_log;
 pub mod haptics;
@@ -24,9 +25,7 @@ pub use haptics::{GateDecision, HapticCommand, HapticGate, SuppressReason};
 pub use injector::{DLL_FILE_NAME, GAME_PROCESS, resolve_dll_path, spawn_supervisor};
 pub use log_tail::LogTail;
 pub use openshock::{ControlCommand, OpenShockClient};
-pub use pipeline::{
-    Pipeline, SourceGate, disconnect, load_config, set_source, start,
-};
+pub use pipeline::{Pipeline, SourceGate, disconnect, load_config, set_source, start};
 pub use toys::{ConnectionMode, ToyDevice, ToyError, ToyHub};
-pub use updater::{apply_staged, GitHubClient, UpdateCheck};
 pub use transport::{EventBus, EventIngress, EventOutlet};
+pub use updater::{GitHubClient, UpdateCheck, apply_staged};

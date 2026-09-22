@@ -10,9 +10,8 @@ async fn tail_delivers_mod_lines_as_game_events() {
     std::fs::write(&path, "old line\n").unwrap();
 
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let worker = tokio::spawn(
-        LogTail::new(path.clone(), sender, SourceGate::new(DataSource::Mod)).run(),
-    );
+    let worker =
+        tokio::spawn(LogTail::new(path.clone(), sender, SourceGate::new(DataSource::Mod)).run());
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut log = std::fs::OpenOptions::new()
@@ -43,9 +42,8 @@ async fn tail_drops_non_kill_events_when_dll_source_is_selected() {
     std::fs::write(&path, "").unwrap();
 
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let worker = tokio::spawn(
-        LogTail::new(path.clone(), sender, SourceGate::new(DataSource::Dll)).run(),
-    );
+    let worker =
+        tokio::spawn(LogTail::new(path.clone(), sender, SourceGate::new(DataSource::Dll)).run());
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut log = std::fs::OpenOptions::new()

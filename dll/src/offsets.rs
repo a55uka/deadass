@@ -1,17 +1,7 @@
-//! Memory offsets for Deadlock's client.dll, dumped with dezlock-dump.
+//! Memory offsets for Deadlock's client.dll.
 //!
-//! The two patch-moving GLOBALS (local pawn, entity system) are baked here
-//! and pinned via a `[globals]` section in deadass-offsets.toml — update
-//! them after a game patch with `scripts/gen_offsets.py` (from a dezlock
-//! dump) or `scripts/refresh_globals.py` (live). `entity_system_ptr`
-//! structurally validates the configured global each session and logs when
-//! it has gone stale.
-//!
-//! The struct FIELD offsets (health, cooldowns, …) come from the game's own
-//! RUNTIME SCHEMA (see `schema`): resolved by class/field name at startup,
-//! so they track whatever build is running. The baked values below are only
-//! the fallback for when the schema system is unreachable, and an explicit
-//! `deadass-offsets.toml` always wins over both.
+//! Resolution order in [`Offsets::load`]: baked defaults, then the game's
+//! runtime schema (see `schema`), then an explicit deadass-offsets.toml.
 
 use serde::Deserialize;
 
@@ -255,16 +245,21 @@ impl<'de> Deserialize<'de> for Hex {
     }
 }
 
+fn apply<T>(slot: &mut T, value: Option<T>) {
+    if let Some(value) = value {
+        *slot = value;
+    }
+}
+
 impl Offsets {
     /// Defaults overlaid with the first override file that exists, in order:
     /// 1. `$DEADASS_OFFSETS`
     /// 2. `deadass-offsets.toml` next to this DLL
     pub fn load() -> Self {
         let mut offsets = Self::default();
-        // Field offsets from the game's own schema system (patch-proof);
-        // fails harmlessly until schemasystem.dll/client.dll are loaded, in
-        // which case the poller retries. The toml overlay runs AFTER, so an
-        // explicit pin always wins.
+        // Schema resolution fails harmlessly until schemasystem.dll and
+        // client.dll are loaded; the poller retries. The toml overlay runs
+        // after, so an explicit pin always wins.
         #[cfg(windows)]
         {
             offsets.schema_resolved = crate::schema::apply_schema(&mut offsets);
@@ -277,7 +272,10 @@ impl Offsets {
                     }
                 }
                 Err(error) if path.is_file() => {
-                    eprintln!("[deadass] unreadable offsets file {}: {error}", path.display());
+                    eprintln!(
+                        "[deadass] unreadable offsets file {}: {error}",
+                        path.display()
+                    );
                 }
                 Err(_) => {}
             }
@@ -288,132 +286,122 @@ impl Offsets {
     fn overlay(&mut self, raw: &str) -> Result<(), String> {
         let file: OffsetsFile = toml::from_str(raw).map_err(|error| error.to_string())?;
         if let Some(dll) = file.dll {
-            if let Some(port) = dll.port {
-                self.dll_port = port;
-            }
-            if let Some(interval) = dll.poll_interval_ms {
-                self.poll_interval_ms = interval.max(1);
-            }
+            apply(&mut self.dll_port, dll.port);
+            apply(
+                &mut self.poll_interval_ms,
+                dll.poll_interval_ms.map(|ms| ms.max(1)),
+            );
         }
         if let Some(globals) = file.globals {
-            if let Some(value) = globals.local_pawn {
-                self.local_pawn_global = value.0;
-            }
-            if let Some(value) = globals.entity_system {
-                self.entity_system_global = value.0;
-            }
+            apply(
+                &mut self.local_pawn_global,
+                globals.local_pawn.map(Hex::value),
+            );
+            apply(
+                &mut self.entity_system_global,
+                globals.entity_system.map(Hex::value),
+            );
         }
         if let Some(list) = file.entity_list {
-            if let Some(value) = list.chunk_array {
-                self.entity_chunk_array = value.0;
-            }
-            if let Some(value) = list.chunk_size {
-                self.entity_chunk_size = value.max(1);
-            }
-            if let Some(value) = list.stride {
-                self.entity_stride = value.0;
-            }
+            apply(
+                &mut self.entity_chunk_array,
+                list.chunk_array.map(Hex::value),
+            );
+            apply(
+                &mut self.entity_chunk_size,
+                list.chunk_size.map(|size| size.max(1)),
+            );
+            apply(&mut self.entity_stride, list.stride.map(Hex::value));
         }
         if let Some(pawn) = file.pawn {
-            if let Some(value) = pawn.health {
-                self.pawn_health = value.0;
-            }
-            if let Some(value) = pawn.max_health {
-                self.pawn_max_health = value.0;
-            }
-            if let Some(value) = pawn.life_state {
-                self.pawn_life_state = value.0;
-            }
-            if let Some(value) = pawn.team {
-                self.pawn_team = value.0;
-            }
-            if let Some(value) = pawn.sim_time {
-                self.pawn_sim_time = value.0;
-            }
-            if let Some(value) = pawn.controller_handle {
-                self.pawn_controller_handle = value.0;
-            }
-            if let Some(value) = pawn.interrupt_state {
-                self.pawn_interrupt_state = value.0;
-            }
-            if let Some(value) = pawn.damage_taken_time {
-                self.pawn_damage_taken_time = value.0;
-            }
-            if let Some(value) = pawn.ability_component {
-                self.pawn_ability_component = value.0;
-            }
-            if let Some(value) = pawn.abilities {
-                self.abilities_vector = value.0;
-            }
+            apply(&mut self.pawn_health, pawn.health.map(Hex::value));
+            apply(&mut self.pawn_max_health, pawn.max_health.map(Hex::value));
+            apply(&mut self.pawn_life_state, pawn.life_state.map(Hex::value));
+            apply(&mut self.pawn_team, pawn.team.map(Hex::value));
+            apply(&mut self.pawn_sim_time, pawn.sim_time.map(Hex::value));
+            apply(
+                &mut self.pawn_controller_handle,
+                pawn.controller_handle.map(Hex::value),
+            );
+            apply(
+                &mut self.pawn_interrupt_state,
+                pawn.interrupt_state.map(Hex::value),
+            );
+            apply(
+                &mut self.pawn_damage_taken_time,
+                pawn.damage_taken_time.map(Hex::value),
+            );
+            apply(
+                &mut self.pawn_ability_component,
+                pawn.ability_component.map(Hex::value),
+            );
+            apply(&mut self.abilities_vector, pawn.abilities.map(Hex::value));
         }
         if let Some(controller) = file.controller {
-            if let Some(value) = controller.player_data {
-                self.controller_player_data = value.0;
-            }
-            if let Some(value) = controller.pawn_handle {
-                self.controller_pawn_handle = value.0;
-            }
-            if let Some(value) = controller.health {
-                self.player_health = value.0;
-            }
-            if let Some(value) = controller.hero_id {
-                self.player_hero_id = value.0;
-            }
-            if let Some(value) = controller.kills {
-                self.player_kills = value.0;
-            }
-            if let Some(value) = controller.assists {
-                self.player_assists = value.0;
-            }
-            if let Some(value) = controller.deaths {
-                self.player_deaths = value.0;
-            }
-            if let Some(value) = controller.kill_streak {
-                self.player_kill_streak = value.0;
-            }
-            if let Some(value) = controller.alive {
-                self.player_alive = value.0;
-            }
+            apply(
+                &mut self.controller_player_data,
+                controller.player_data.map(Hex::value),
+            );
+            apply(
+                &mut self.controller_pawn_handle,
+                controller.pawn_handle.map(Hex::value),
+            );
+            apply(&mut self.player_health, controller.health.map(Hex::value));
+            apply(&mut self.player_hero_id, controller.hero_id.map(Hex::value));
+            apply(&mut self.player_kills, controller.kills.map(Hex::value));
+            apply(&mut self.player_assists, controller.assists.map(Hex::value));
+            apply(&mut self.player_deaths, controller.deaths.map(Hex::value));
+            apply(
+                &mut self.player_kill_streak,
+                controller.kill_streak.map(Hex::value),
+            );
+            apply(&mut self.player_alive, controller.alive.map(Hex::value));
         }
         if let Some(ability) = file.ability {
-            if let Some(value) = ability.channeling {
-                self.ability_channeling = value.0;
-            }
-            if let Some(value) = ability.cooldown_start {
-                self.ability_cooldown_start = value.0;
-            }
-            if let Some(value) = ability.cooldown_end {
-                self.ability_cooldown_end = value.0;
-            }
-            if let Some(value) = ability.slot {
-                self.ability_slot = value.0;
-            }
-            if let Some(value) = ability.charges {
-                self.ability_charges = value.0;
-            }
-            if let Some(value) = ability.parry_start {
-                self.ability_parry_start = value.0;
-            }
-            if let Some(value) = ability.attack_parried {
-                self.ability_attack_parried = value.0;
-            }
-            if let Some(value) = ability.parry_success_end {
-                self.ability_parry_success_end = value.0;
-            }
-            if let Some(value) = ability.melee_state {
-                self.ability_melee_state = value.0;
-            }
-            if let Some(value) = ability.melee_chain {
-                self.ability_melee_chain = value.0;
-            }
-            if let Some(value) = ability.melee_slot {
-                self.melee_slot = value;
-            }
-            if let Some(value) = ability.max_slot {
-                self.max_ability_slot = value;
-            }
+            apply(
+                &mut self.ability_channeling,
+                ability.channeling.map(Hex::value),
+            );
+            apply(
+                &mut self.ability_cooldown_start,
+                ability.cooldown_start.map(Hex::value),
+            );
+            apply(
+                &mut self.ability_cooldown_end,
+                ability.cooldown_end.map(Hex::value),
+            );
+            apply(&mut self.ability_slot, ability.slot.map(Hex::value));
+            apply(&mut self.ability_charges, ability.charges.map(Hex::value));
+            apply(
+                &mut self.ability_parry_start,
+                ability.parry_start.map(Hex::value),
+            );
+            apply(
+                &mut self.ability_attack_parried,
+                ability.attack_parried.map(Hex::value),
+            );
+            apply(
+                &mut self.ability_parry_success_end,
+                ability.parry_success_end.map(Hex::value),
+            );
+            apply(
+                &mut self.ability_melee_state,
+                ability.melee_state.map(Hex::value),
+            );
+            apply(
+                &mut self.ability_melee_chain,
+                ability.melee_chain.map(Hex::value),
+            );
+            apply(&mut self.melee_slot, ability.melee_slot);
+            apply(&mut self.max_ability_slot, ability.max_slot);
         }
         Ok(())
+    }
+}
+
+impl Hex {
+    fn value(self) -> u64 {
+        self.0
     }
 }
 
@@ -430,8 +418,8 @@ fn override_path() -> Option<std::path::PathBuf> {
 #[cfg(windows)]
 pub(crate) fn dll_directory() -> Option<std::path::PathBuf> {
     use windows_sys::Win32::System::LibraryLoader::{
-        GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        GetModuleFileNameW, GetModuleHandleExW,
     };
 
     extern "system" fn pin_module() {}
@@ -448,12 +436,15 @@ pub(crate) fn dll_directory() -> Option<std::path::PathBuf> {
         return None;
     }
     let mut buffer = [0u16; 512];
-    let len = unsafe { GetModuleFileNameW(module, buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+    let len =
+        unsafe { GetModuleFileNameW(module, buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
     if len == 0 || len as usize >= buffer.len() {
         return None;
     }
     let path = String::from_utf16_lossy(&buffer[..len]);
-    std::path::PathBuf::from(path).parent().map(|parent| parent.to_path_buf())
+    std::path::PathBuf::from(path)
+        .parent()
+        .map(|parent| parent.to_path_buf())
 }
 
 #[cfg(not(windows))]
@@ -481,7 +472,10 @@ mod tests {
             .expect("overlay parses");
         assert_eq!(offsets.local_pawn_global, 0x1234);
         assert_eq!(offsets.pawn_health, 720);
-        assert_eq!(offsets.entity_system_global, Offsets::default().entity_system_global);
+        assert_eq!(
+            offsets.entity_system_global,
+            Offsets::default().entity_system_global
+        );
     }
 
     #[test]

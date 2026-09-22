@@ -49,7 +49,8 @@ impl LogTail {
             if self.path.is_file() {
                 waiting_announced = false;
                 tail.baseline_once(&self.path, &self.state).await;
-                tail.drain_available(&self.path, &self.sender, &self.gate, &self.state).await;
+                tail.drain_available(&self.path, &self.sender, &self.gate, &self.state)
+                    .await;
                 tokio::time::sleep(TAIL_POLL).await;
             } else {
                 tail.reset();
@@ -147,7 +148,9 @@ impl TailCursor {
                     if !gate.allows(DataSource::Mod) && !kill_feed {
                         continue;
                     }
-                    if gate.allows(DataSource::Mod) && let Some(state) = state {
+                    if gate.allows(DataSource::Mod)
+                        && let Some(state) = state
+                    {
                         state.lock().await.sources.mark_mod_seen();
                     }
                     let _ = sender.send(event);

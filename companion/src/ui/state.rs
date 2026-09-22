@@ -35,14 +35,10 @@ impl SourceStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum InjectPhase {
-    /// Mod source selected (or the DLL supervisor has nothing to report).
     #[default]
     Idle,
-    /// Dll source selected but deadlock.exe is not running.
     WaitingForGame,
-    /// deadass-dll.dll is loaded in the game.
     Injected,
-    /// The last injection attempt failed.
     Failed,
 }
 
@@ -123,11 +119,8 @@ impl ToyStatus {
 
 #[derive(Debug, Clone, Default)]
 pub struct UpdateStatus {
-    /// GitHub was queried this session.
     pub checked: bool,
-    /// Newest release version, when parsed.
     pub latest_version: Option<String>,
-    /// Some(version) when a newer release exists.
     pub available: Option<String>,
 }
 
@@ -135,7 +128,6 @@ pub struct UpdateStatus {
 pub struct AppState {
     pub config: AppConfig,
     pub updates: UpdateStatus,
-    /// Bumped whenever the config changes
     pub config_rev: u64,
     pub sources: SourceStatus,
     pub inject: InjectStatus,
@@ -161,7 +153,7 @@ impl AppState {
             log_path: None,
         }
     }
-    
+
     pub fn replace_config(&mut self, config: AppConfig) -> AppConfig {
         let previous = self.config.clone();
         self.config = config;
@@ -170,10 +162,7 @@ impl AppState {
     }
 
     pub fn set_inject(&mut self, phase: InjectPhase, detail: Option<String>) {
-        self.inject = InjectStatus {
-            phase,
-            detail,
-        };
+        self.inject = InjectStatus { phase, detail };
     }
 
     pub fn set_toys(&mut self, mode: ConnectionMode, devices: &[ToyDevice]) {

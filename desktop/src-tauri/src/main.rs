@@ -16,20 +16,20 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_status,
-            commands::set_data_source,
-            commands::set_trigger,
-            commands::set_config,
-            commands::connect_embedded,
-            commands::connect_central,
-            commands::disconnect,
-            commands::rescan,
-            commands::test_fire,
-            commands::test_openshock,
-            commands::test_toys,
-            commands::check_updates,
-            commands::update_offsets_now,
-            commands::update_app_now,
+            commands::toys::get_status,
+            commands::config::set_data_source,
+            commands::config::set_trigger,
+            commands::config::set_config,
+            commands::toys::connect_embedded,
+            commands::toys::connect_central,
+            commands::toys::disconnect,
+            commands::toys::rescan,
+            commands::toys::test_fire,
+            commands::toys::test_openshock,
+            commands::toys::test_toys,
+            commands::updates::check_updates,
+            commands::updates::update_offsets_now,
+            commands::updates::update_app_now,
         ])
         .run(tauri::generate_context!())
         .expect("deadass desktop failed to run");

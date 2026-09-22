@@ -1,6 +1,6 @@
 use crate::pipeline::SourceGate;
-use crate::ui::state::{InjectPhase, InjectStatus};
 use crate::ui::AppState;
+use crate::ui::state::{InjectPhase, InjectStatus};
 use deadass_shared::DataSource;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,12 +58,11 @@ fn describe(status: &InjectStatus) -> Option<String> {
         )),
         InjectPhase::Failed => Some(format!(
             "dll injection failed: {}",
-            status.detail.as_deref().unwrap_or_else(|| "unknown error")
+            status.detail.as_deref().unwrap_or("unknown error")
         )),
     }
 }
 
-/// One supervisor tick: figure out where the game and the DLL stand.
 async fn probe(dll_path: &Path) -> InjectStatus {
     if !dll_path.is_file() {
         return InjectStatus::failed(format!(
@@ -92,18 +91,18 @@ mod windows {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, Process32FirstW, Process32NextW,
-        MODULEENTRY32W, PROCESSENTRY32W, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32,
+        CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, Module32NextW, PROCESSENTRY32W,
+        Process32FirstW, Process32NextW, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32,
         TH32CS_SNAPPROCESS,
     };
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
     use windows_sys::Win32::System::Memory::{
-        VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
+        MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAllocEx, VirtualFreeEx,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateRemoteThread, GetExitCodeThread, OpenProcess, WaitForSingleObject,
-        PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
-        PROCESS_VM_WRITE,
+        CreateRemoteThread, GetExitCodeThread, OpenProcess, PROCESS_CREATE_THREAD,
+        PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
+        WaitForSingleObject,
     };
 
     const PROCESS_PERMISSIONS: u32 = PROCESS_CREATE_THREAD
@@ -117,7 +116,9 @@ mod windows {
     }
 
     fn trimmed(raw: &[u16]) -> String {
-        String::from_utf16_lossy(raw).trim_end_matches('\0').to_string()
+        String::from_utf16_lossy(raw)
+            .trim_end_matches('\0')
+            .to_string()
     }
 
     pub fn find_deadlock_pid() -> Option<u32> {
@@ -170,8 +171,6 @@ mod windows {
         }
     }
 
-    /// Standard LoadLibraryW injection: copy the DLL path into the target,
-    /// spin a remote thread on kernel32!LoadLibraryW pointing at it.
     pub fn inject(pid: u32, dll_path: &Path) -> Result<(), String> {
         let path = std::fs::canonicalize(dll_path)
             .map_err(|error| format!("cannot resolve dll path: {error}"))?;

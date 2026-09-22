@@ -35,8 +35,7 @@ impl ControlCommand {
     }
 
     fn duration_ms(self) -> u64 {
-        self.duration_ms
-            .clamp(MIN_DURATION_MS, MAX_DURATION_MS)
+        self.duration_ms.clamp(MIN_DURATION_MS, MAX_DURATION_MS)
     }
 
     pub fn kind_str(self) -> &'static str {
@@ -122,7 +121,10 @@ fn error_detail(body: &str) -> String {
         }
         if let Some(errors) = json["errors"].as_object() {
             for (field, messages) in errors {
-                if let Some(first) = messages.as_array().and_then(|m| m.first()).and_then(|m| m.as_str())
+                if let Some(first) = messages
+                    .as_array()
+                    .and_then(|m| m.first())
+                    .and_then(|m| m.as_str())
                 {
                     parts.push(format!("{field}: {first}"));
                 }
@@ -166,16 +168,13 @@ mod tests {
             intensity: 250,
             duration_ms: 90_000,
         };
-        let payload = OpenShockClient::payload(
-            command,
-            &[String::from("abc123"), String::from("def456")],
-        );
+        let payload =
+            OpenShockClient::payload(command, &[String::from("abc123"), String::from("def456")]);
         let shocks = payload["shocks"].as_array().expect("shocks array");
         assert_eq!(shocks.len(), 2);
         assert_eq!(shocks[0]["id"], "abc123");
         assert_eq!(shocks[1]["id"], "def456");
         assert_eq!(shocks[0]["type"], "shock");
-        // Clamped to the API ranges.
         assert_eq!(shocks[0]["intensity"], 100);
         assert_eq!(shocks[0]["duration"], 30_000);
         assert_eq!(payload["custom"], false);
@@ -215,8 +214,6 @@ mod tests {
     #[test]
     fn validation_errors_are_summarized_field_by_field() {
         let body = r#"{"type":"Validation.Error","title":"One or more validation errors occurred","status":400,"errors":{"body":["The body field is required."],"$.shocks[0].id":["The JSON value could not be converted to System.Guid."]}}"#;
-        // Error fields come back sorted (serde_json's ordered map): the id
-        // conversion failure is the interesting one.
         assert_eq!(
             error_detail(body),
             "One or more validation errors occurred; \

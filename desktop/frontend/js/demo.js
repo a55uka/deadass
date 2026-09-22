@@ -1,6 +1,3 @@
-/* Browser preview backend: when app.js runs without the Tauri bridge it talks
-   to this in-page mock instead, so the UI can be exercised in any browser. */
-
 (() => {
   if (window.__TAURI__) return;
 
@@ -21,7 +18,6 @@
     trigger("punch_landed", 0.45, 200),
     trigger("punch_taken", 0.4, 200),
   ];
-  // Demo the shock feature on a couple of triggers.
   Object.assign(triggers[0], {
     shock_enabled: true, shock_intensity: 25, shock_duration_ms: 300,
     shock_shocker_ids: ["abc123"],
@@ -130,7 +126,6 @@
             duration_ms: args.duration_ms,
             retrigger_cooldown_ms: args.retrigger_cooldown_ms,
             pattern: args.pattern,
-            // mirror the Rust command: null/absent means "don't change"
             vibrate_devices: Array.isArray(args.vibrate_devices)
               ? args.vibrate_devices
               : rule.vibrate_devices,
@@ -156,7 +151,6 @@
           state.config.openshock_shockers = args.openshock_shockers
             .map((shocker) => ({ id: shocker.id.trim(), name: shocker.name.trim() }))
             .filter((shocker) => shocker.id);
-          // keep explicit trigger selections pointing at roster entries
           const ids = state.config.openshock_shockers.map((shocker) => shocker.id);
           for (const rule of triggers) {
             if (Array.isArray(rule.shock_shocker_ids)) {
@@ -206,7 +200,6 @@
           return snapshot();
         }
         if (rule.shock_enabled) {
-          // Null selection = every roster shocker (same as the backend).
           const allIds = state.config.openshock_shockers.map((s) => s.id).filter(Boolean);
           const picked = rule.shock_shocker_ids == null ? allIds : rule.shock_shocker_ids;
           const ids = picked.filter((id) => allIds.includes(id));

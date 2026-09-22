@@ -27,7 +27,9 @@ pub fn spawn(path: PathBuf, state: Arc<Mutex<AppState>>) -> tokio::task::JoinHan
 }
 
 fn modified_at(path: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(path).and_then(|meta| meta.modified()).ok()
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
 }
 
 async fn reload_from_disk(path: &Path, state: &Arc<Mutex<AppState>>) {
@@ -53,7 +55,6 @@ async fn reload_from_disk(path: &Path, state: &Arc<Mutex<AppState>>) {
     }
 }
 
-/// Human-readable diff of two configs, one line per changed field.
 pub fn describe_change(old: &AppConfig, new: &AppConfig) -> Vec<String> {
     let mut lines = Vec::new();
     let mut field = |label: &str, change: Option<String>| {
@@ -61,10 +62,7 @@ pub fn describe_change(old: &AppConfig, new: &AppConfig) -> Vec<String> {
             lines.push(format!("{label} {detail}"));
         }
     };
-    field(
-        "master_gain",
-        changed_f64(old.master_gain, new.master_gain),
-    );
+    field("master_gain", changed_f64(old.master_gain, new.master_gain));
     field(
         "max_strength_cap",
         changed_f64(old.max_strength_cap, new.max_strength_cap),
@@ -87,8 +85,13 @@ pub fn describe_change(old: &AppConfig, new: &AppConfig) -> Vec<String> {
     );
     field(
         "buttplug_ws_url",
-        (old.buttplug_ws_url != new.buttplug_ws_url)
-            .then(|| format!("{} -> {}", quote_none(&old.buttplug_ws_url), quote_none(&new.buttplug_ws_url))),
+        (old.buttplug_ws_url != new.buttplug_ws_url).then(|| {
+            format!(
+                "{} -> {}",
+                quote_none(&old.buttplug_ws_url),
+                quote_none(&new.buttplug_ws_url)
+            )
+        }),
     );
     field(
         "dll_path",
@@ -103,16 +106,17 @@ pub fn describe_change(old: &AppConfig, new: &AppConfig) -> Vec<String> {
     );
     field(
         "data_source",
-        (old.data_source != new.data_source)
-            .then(|| format!("{} -> {}", old.data_source.as_str(), new.data_source.as_str())),
+        (old.data_source != new.data_source).then(|| {
+            format!(
+                "{} -> {}",
+                old.data_source.as_str(),
+                new.data_source.as_str()
+            )
+        }),
     );
 
     let mut trigger_lines = Vec::new();
-    let mut keys: Vec<_> = old
-        .triggers
-        .keys()
-        .chain(new.triggers.keys())
-        .collect();
+    let mut keys: Vec<_> = old.triggers.keys().chain(new.triggers.keys()).collect();
     keys.sort_by_key(|kind| kind.to_string());
     keys.dedup();
     for key in keys {
@@ -143,7 +147,10 @@ fn describe_trigger(old: &TriggerConfig, new: &TriggerConfig) -> Option<String> 
         parts.push(format!("enabled {}", on_off(old.enabled, new.enabled)));
     }
     if old.strength != new.strength {
-        parts.push(format!("strength {}", changed_f64(old.strength, new.strength).unwrap_or_default()));
+        parts.push(format!(
+            "strength {}",
+            changed_f64(old.strength, new.strength).unwrap_or_default()
+        ));
     }
     if old.duration_ms != new.duration_ms {
         parts.push(format!(
@@ -176,15 +183,15 @@ fn changed_bool(old: bool, new: bool) -> Option<String> {
 }
 
 fn on_off(old: bool, new: bool) -> String {
-    format!("{} -> {}", if old { "on" } else { "off" }, if new { "on" } else { "off" })
+    format!(
+        "{} -> {}",
+        if old { "on" } else { "off" },
+        if new { "on" } else { "off" }
+    )
 }
 
 fn quote_none(value: &str) -> &str {
-    if value.is_empty() {
-        "(empty)"
-    } else {
-        value
-    }
+    if value.is_empty() { "(empty)" } else { value }
 }
 
 #[cfg(test)]
@@ -212,7 +219,10 @@ mod tests {
             config.debug_logging = true;
         });
         let lines = describe_change(&old, &new);
-        assert_eq!(lines, ["master_gain 1.00 -> 0.50", "debug_logging off -> on"]);
+        assert_eq!(
+            lines,
+            ["master_gain 1.00 -> 0.50", "debug_logging off -> on"]
+        );
     }
 
     #[test]
