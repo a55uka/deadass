@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::debug_log;
 use super::diff::{Monitor, PawnSnapshot, PlayerSnapshot};
-use super::game::{client_base, snapshot};
+use super::game::{client_base, Reader};
 use super::offsets::Offsets;
 use super::sender::EventSender;
 
@@ -30,6 +30,7 @@ fn poll_loop() {
     ));
 
     let mut client_announced = false;
+    let mut reader = Reader::new();
     let mut pawn_seen: Option<u64> = None;
     let mut players_log = String::new();
     let mut tick: u64 = 0;
@@ -47,7 +48,7 @@ fn poll_loop() {
 
         retry_schema(&mut offsets, &mut monitor, tick, &mut schema_attempts);
 
-        let snap = snapshot(&offsets);
+        let snap = reader.snapshot(&offsets);
         trace_pawn(&mut pawn_seen, &snap.pawn);
         trace_players(&mut players_log, &snap.players);
 

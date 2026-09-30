@@ -48,16 +48,14 @@
 # abilities = "0x1538"              # m_vecAbilities (component + 0x68 in this build)
 
 [ability]
-# C_CitadelBaseAbility fields, plus the MeleeParry/HoldMelee specifics.
+# C_CitadelBaseAbility fields, plus the MeleeParry/HoldMelee specifics that
+# drive the parry/punch event chains.
 # channeling = "0x740"
-# cooldown_start = "0x764"
+# cooldown_start = "0x764"          # also the melee "swung at" timestamp
 # cooldown_end = "0x768"
 # slot = "0x778"
 # charges = "0x780"
-# parry_start = "0x11DC"            # CCitadel_Ability_MeleeParry.m_flParryStartTime
-# attack_parried = "0x11E0"         # m_bAttackParried (a parry landed)
-# parry_success_end = "0x11E4"      # m_flParrySuccessEndTime
+# parry_success_end = "0x11E4"      # CCitadel_Ability_MeleeParry.m_flParrySuccessEndTime
 # melee_state = "0x12F0"            # CCitadel_Ability_HoldMelee.m_eCurrentAttackState
-# melee_chain = "0x130C"            # m_nLightChainCount (light punches landed)
 # melee_slot = 22                   # ESlot_Weapon_Melee
 # max_slot = 22

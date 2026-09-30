@@ -12,10 +12,10 @@ pub use entities::client_base;
 #[cfg(windows)]
 pub use memory::pages_committed;
 #[cfg(windows)]
-pub use reader::snapshot;
+pub use reader::Reader;
 
 #[cfg(not(windows))]
-pub use stub::{client_base, snapshot};
+pub use stub::{client_base, Reader};
 
 const MIN_USER_ADDRESS: u64 = 0x10000;
 const MAX_USER_ADDRESS: u64 = 0x7FFF_FFFE_FFFF;

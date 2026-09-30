@@ -4,10 +4,16 @@ const ABILITY_SETTLE_MS: u64 = 2000;
 
 const COOLDOWN_LEAD_EPSILON: f32 = 0.05;
 const PARRY_SLOT_MIN: u8 = 4;
-const MELEE_ACTIVITY_WINDOW_MS: u64 = 2000;
-const PARRY_SUCCESS_FRESH_SECONDS: f32 = 5.0;
+/// Sanity bound on m_flParrySuccessEndTime: a live success window ends a few
+/// seconds out; anything further is stale garbage, not a landed parry.
+const PARRY_SUCCESS_WINDOW_MAX: f32 = 60.0;
 const HERO_SLOT_LIMIT: u8 = 4;
 const DEFAULT_MELEE_SLOT: u8 = 22;
+
+const SWING_ECHO_MS: u64 = 500;
+const INTERRUPT_ECHO_MS: u64 = 500;
+const STUN_CONFIRM_MS: u64 = 300;
+const ENEMY_HIT_QUIET_MS: u64 = 100;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PawnSnapshot {
@@ -16,7 +22,7 @@ pub struct PawnSnapshot {
     pub life_state: u8,
     pub game_time: f32,
     pub interrupted: bool,
-    pub damage_taken_time: f32,
+    pub melee_threat: bool,
     pub abilities: Vec<AbilitySnapshot>,
 }
 
@@ -31,7 +37,6 @@ pub struct PlayerSnapshot {
     pub kill_streak: i32,
     pub alive: bool,
     pub health: i32,
-    pub melee_chain: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -46,22 +51,28 @@ pub struct AbilitySnapshot {
     pub charges: Option<i32>,
     pub cooldown_end: f32,
     pub channeling: bool,
-    pub attack_parried: bool,
-    pub parry_start: f32,
-    pub parry_success_end: f32,
     pub melee_state: u32,
-    pub melee_chain: u32,
+    pub parry_success_end: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+impl AbilitySnapshot {
+    fn melee_active(&self) -> bool {
+        self.melee_state != 0 || self.channeling
+    }
+
+    fn parry_success_active(&self, game_time: f32) -> bool {
+        self.parry_success_end > game_time
+            && self.parry_success_end < game_time + PARRY_SUCCESS_WINDOW_MAX
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 struct TrackedAbility {
     charges: Option<i32>,
     cooling: bool,
     channeling: bool,
-    attack_parried: bool,
-    parry_start: f32,
+    melee_state: u32,
     parry_success_end: f32,
-    melee_chain: u32,
 }
 
 fn track(snapshot: AbilitySnapshot, game_time: f32) -> TrackedAbility {
@@ -69,10 +80,19 @@ fn track(snapshot: AbilitySnapshot, game_time: f32) -> TrackedAbility {
         charges: snapshot.charges,
         cooling: snapshot.cooldown_end > game_time + COOLDOWN_LEAD_EPSILON,
         channeling: snapshot.channeling,
-        attack_parried: snapshot.attack_parried,
-        parry_start: snapshot.parry_start,
+        melee_state: snapshot.melee_state,
         parry_success_end: snapshot.parry_success_end,
-        melee_chain: snapshot.melee_chain,
+    }
+}
+
+impl TrackedAbility {
+    fn melee_active(&self) -> bool {
+        self.melee_state != 0 || self.channeling
+    }
+
+    fn parry_success_active(&self, game_time: f32) -> bool {
+        self.parry_success_end > game_time
+            && self.parry_success_end < game_time + PARRY_SUCCESS_WINDOW_MAX
     }
 }
 
@@ -82,17 +102,23 @@ pub struct Monitor {
     players: std::collections::BTreeMap<u64, TrackedPlayer>,
     sequence: u64,
     ability_settle_until_ms: u64,
-    melee_activity_until_ms: u64,
-    enemy_punch_until_ms: u64,
     melee_slot: u8,
+    melee_swing_until_ms: u64,
+    last_interrupt_ms: u64,
+    interrupt_since_ms: u64,
+    interrupt_health: i32,
+    interrupt_swinging: bool,
+    interrupt_enemies_quiet: bool,
+    parried_emitted: bool,
+    enemy_health_drop_ms: u64,
 }
 
 #[derive(Debug)]
 struct TrackedPawn {
     address: u64,
     alive: bool,
+    health: i32,
     interrupted: bool,
-    damage_taken_time: f32,
     abilities: std::collections::BTreeMap<u8, TrackedAbility>,
 }
 
@@ -101,7 +127,6 @@ struct TrackedPlayer {
     kills: i32,
     assists: i32,
     health: i32,
-    melee_chain: u32,
 }
 
 impl Monitor {
@@ -113,7 +138,7 @@ impl Monitor {
     }
 
     pub fn update(&mut self, snapshot: Snapshot, now_ms: u64) -> Vec<GameEvent> {
-        let mut events = self.update_players(&snapshot.players, now_ms);
+        let mut events = self.update_players(&snapshot.players, snapshot.pawn.as_ref(), now_ms);
         events.extend(self.update_pawn(snapshot.pawn, now_ms));
         events
     }
@@ -122,10 +147,22 @@ impl Monitor {
         self.melee_slot = slot;
     }
 
+    fn reset_interrupt_tracking(&mut self) {
+        self.melee_swing_until_ms = 0;
+        self.last_interrupt_ms = 0;
+        self.interrupt_since_ms = 0;
+        self.interrupt_health = 0;
+        self.interrupt_swinging = false;
+        self.interrupt_enemies_quiet = true;
+        self.parried_emitted = false;
+        self.enemy_health_drop_ms = 0;
+    }
+
     fn update_pawn(&mut self, snapshot: Option<PawnSnapshot>, now_ms: u64) -> Vec<GameEvent> {
         let Some(snapshot) = snapshot else {
             self.previous = None;
             self.players.clear();
+            self.reset_interrupt_tracking();
             return Vec::new();
         };
 
@@ -134,20 +171,21 @@ impl Monitor {
         for ability in &snapshot.abilities {
             abilities.insert(ability.slot, track(*ability, snapshot.game_time));
         }
-
-        let melee_active = snapshot.abilities.iter().any(|ability| {
-            ability.slot == self.melee_slot && (ability.channeling || ability.melee_state != 0)
-        });
-        if melee_active {
-            self.melee_activity_until_ms = now_ms + MELEE_ACTIVITY_WINDOW_MS;
+        if snapshot
+            .abilities
+            .iter()
+            .any(|ability| ability.slot == self.melee_slot && ability.melee_active())
+        {
+            self.melee_swing_until_ms = now_ms + SWING_ECHO_MS;
         }
 
         let Some(previous) = self.previous.take() else {
+            self.reset_interrupt_tracking();
             self.previous = Some(TrackedPawn {
                 address: snapshot.address,
                 alive,
+                health: snapshot.health,
                 interrupted: snapshot.interrupted,
-                damage_taken_time: snapshot.damage_taken_time,
                 abilities,
             });
             return Vec::new();
@@ -159,11 +197,12 @@ impl Monitor {
                 events.push(self.emit(EventKind::Respawn, now_ms));
             }
             self.ability_settle_until_ms = now_ms + ABILITY_SETTLE_MS;
+            self.reset_interrupt_tracking();
             self.previous = Some(TrackedPawn {
                 address: snapshot.address,
                 alive,
+                health: snapshot.health,
                 interrupted: snapshot.interrupted,
-                damage_taken_time: snapshot.damage_taken_time,
                 abilities,
             });
             return events;
@@ -172,82 +211,115 @@ impl Monitor {
         if previous.alive && !alive {
             events.push(self.emit(EventKind::Death, now_ms));
             self.ability_settle_until_ms = now_ms + ABILITY_SETTLE_MS;
+            self.reset_interrupt_tracking();
         } else if !previous.alive && alive {
             events.push(self.emit(EventKind::Respawn, now_ms));
             self.ability_settle_until_ms = now_ms + ABILITY_SETTLE_MS;
+            self.reset_interrupt_tracking();
+        }
+
+        let swinging_now = snapshot
+            .abilities
+            .iter()
+            .any(|ability| ability.slot == self.melee_slot && ability.melee_active());
+        let swinging_before = previous
+            .abilities
+            .get(&self.melee_slot)
+            .is_some_and(TrackedAbility::melee_active);
+        if snapshot.interrupted && !previous.interrupted {
+            self.interrupt_since_ms = now_ms;
+            self.interrupt_health = previous.health;
+            self.interrupt_swinging = swinging_now || swinging_before;
+            self.interrupt_enemies_quiet =
+                now_ms.saturating_sub(self.enemy_health_drop_ms) >= ENEMY_HIT_QUIET_MS;
+            self.parried_emitted = false;
+            self.last_interrupt_ms = now_ms;
+        } else if snapshot.interrupted && self.interrupt_since_ms == 0 {
+            self.interrupt_since_ms = now_ms;
+            self.interrupt_health = previous.health;
+            self.interrupt_swinging = false;
+            self.parried_emitted = false;
+            self.last_interrupt_ms = now_ms;
+        } else if !snapshot.interrupted {
+            self.interrupt_since_ms = 0;
+            self.parried_emitted = false;
         }
 
         let settled = alive && now_ms >= self.ability_settle_until_ms;
+        let mut parry_emitted = false;
         for (slot, current) in &abilities {
             let Some(tracked) = previous.abilities.get(slot) else {
                 continue;
             };
             let transitions = ability_transitions(*slot, tracked, current, snapshot.game_time);
-            if !settled {
-                continue;
-            }
-            if transitions.used && *slot < HERO_SLOT_LIMIT {
+            if transitions.used && settled && *slot < HERO_SLOT_LIMIT {
                 events.push(self.emit(EventKind::AbilityUsed { slot: *slot }, now_ms));
             }
-            if transitions.ready && *slot < HERO_SLOT_LIMIT {
+            if transitions.ready && settled && *slot < HERO_SLOT_LIMIT {
                 events.push(self.emit(EventKind::AbilityReady { slot: *slot }, now_ms));
             }
-            if transitions.got_parried {
-                events.push(self.emit(EventKind::Parried, now_ms));
-            }
-
-            if *slot == self.melee_slot {
-                let chain_hit = current
-                    .melee_chain
-                    .saturating_sub(tracked.melee_chain)
-                    .min(3);
-                for _ in 0..chain_hit {
-                    events.push(self.emit(EventKind::PunchLanded, now_ms));
-                }
+            if transitions.parry_caught
+                && settled
+                && !parry_emitted
+                && now_ms >= self.melee_swing_until_ms
+                && now_ms.saturating_sub(self.last_interrupt_ms) >= INTERRUPT_ECHO_MS
+            {
+                events.push(self.emit(EventKind::Parry, now_ms));
+                parry_emitted = true;
             }
         }
 
-        let parry_window_open = snapshot.abilities.iter().any(|ability| {
-            ability.slot == self.melee_slot
-                && ability.parry_start > snapshot.game_time - 2.0
-                && ability.parry_start > 0.0
-        });
-        let parry_landed = !previous.interrupted && snapshot.interrupted && parry_window_open;
-        if settled && parry_landed {
-            events.push(self.emit(EventKind::Parry, now_ms));
+        let stunned_long = snapshot.interrupted
+            && self.interrupt_since_ms != 0
+            && now_ms.saturating_sub(self.interrupt_since_ms) >= STUN_CONFIRM_MS;
+        if settled
+            && stunned_long
+            && !self.parried_emitted
+            && self.interrupt_swinging
+            && snapshot.health >= self.interrupt_health
+            && self.interrupt_enemies_quiet
+        {
+            events.push(self.emit(EventKind::Parried, now_ms));
+            self.parried_emitted = true;
         }
 
-        let player_damaged_us = snapshot.damage_taken_time > previous.damage_taken_time + 0.05;
-        let punch_taken = player_damaged_us && now_ms <= self.enemy_punch_until_ms;
-        if settled && punch_taken {
+        // Punch taken: the reader attributed this tick's damage to an enemy
+        // melee swing (see game::reader's lazy sweep).
+        if settled && snapshot.melee_threat {
             events.push(self.emit(EventKind::PunchTaken, now_ms));
         }
 
         self.previous = Some(TrackedPawn {
             address: snapshot.address,
             alive,
+            health: snapshot.health,
             interrupted: snapshot.interrupted,
-            damage_taken_time: snapshot.damage_taken_time,
             abilities,
         });
         events
     }
 
-    fn update_players(&mut self, players: &[PlayerSnapshot], now_ms: u64) -> Vec<GameEvent> {
+    fn update_players(
+        &mut self,
+        players: &[PlayerSnapshot],
+        pawn: Option<&PawnSnapshot>,
+        now_ms: u64,
+    ) -> Vec<GameEvent> {
         let mut events = Vec::new();
         if players.is_empty() {
             return events;
         }
-        let mut seen = std::collections::HashSet::new();
-        let enemy_punched = players.iter().any(|p| {
-            let tracked = self.players.get(&p.address).map(|t| t.melee_chain);
-            tracked.is_some_and(|prev| p.melee_chain.saturating_sub(prev) >= 1)
+
+        let our_swing_context = pawn.is_some_and(|pawn| {
+            pawn.abilities.iter().any(|ability| {
+                (ability.slot == self.melee_slot && ability.melee_active())
+                    || ability.parry_success_active(pawn.game_time)
+            })
         });
-        if enemy_punched {
-            self.enemy_punch_until_ms = now_ms + MELEE_ACTIVITY_WINDOW_MS;
-        }
+        let settled = now_ms >= self.ability_settle_until_ms;
+        let mut punch_emitted = false;
+
         for player in players {
-            seen.insert(player.address);
             let Some(&previous) = self.players.get(&player.address) else {
                 self.players.insert(
                     player.address,
@@ -255,7 +327,6 @@ impl Monitor {
                         kills: player.kills,
                         assists: player.assists,
                         health: player.health,
-                        melee_chain: player.melee_chain,
                     },
                 );
                 continue;
@@ -270,11 +341,12 @@ impl Monitor {
                 for _ in 0..clamp_delta(previous.assists, player.assists) {
                     events.push(self.emit(EventKind::Assist, now_ms));
                 }
-            } else if !player.is_local
-                && previous.health - player.health >= 1
-                && now_ms <= self.melee_activity_until_ms
-            {
-                events.push(self.emit(EventKind::PunchLanded, now_ms));
+            } else if previous.health - player.health >= 1 {
+                self.enemy_health_drop_ms = now_ms;
+                if !punch_emitted && settled && our_swing_context {
+                    events.push(self.emit(EventKind::PunchLanded, now_ms));
+                    punch_emitted = true;
+                }
             }
 
             self.players.insert(
@@ -283,7 +355,6 @@ impl Monitor {
                     kills: player.kills,
                     assists: player.assists,
                     health: player.health,
-                    melee_chain: player.melee_chain,
                 },
             );
         }
@@ -300,7 +371,7 @@ impl Monitor {
 struct Transitions {
     used: bool,
     ready: bool,
-    got_parried: bool,
+    parry_caught: bool,
 }
 
 fn ability_transitions(
@@ -319,17 +390,15 @@ fn ability_transitions(
         .is_some_and(|(was, now)| now > was);
     let channel_started = !previous.channeling && current.channeling;
 
-    let got_parried = !previous.attack_parried
-        && current.attack_parried
-        && current.parry_success_end > game_time - PARRY_SUCCESS_FRESH_SECONDS
-        && current.parry_success_end < game_time + 300.0;
+    let parry_caught =
+        current.parry_success_active(game_time) && !previous.parry_success_active(game_time);
 
     Transitions {
         used: charge_used
             || (!previous.cooling && current.cooling)
             || (channel_started && slot < PARRY_SLOT_MIN),
         ready: charge_ready || (previous.cooling && !current.cooling),
-        got_parried,
+        parry_caught,
     }
 }
 
@@ -344,7 +413,7 @@ mod tests {
             life_state: if alive { 0 } else { 1 },
             game_time: 100.0,
             interrupted: false,
-            damage_taken_time: 0.0,
+            melee_threat: false,
             abilities: Vec::new(),
         }
     }
@@ -355,25 +424,20 @@ mod tests {
             charges,
             cooldown_end,
             channeling: false,
-            attack_parried: false,
-            parry_start: 0.0,
-            parry_success_end: 0.0,
             melee_state: 0,
-            melee_chain: 0,
+            parry_success_end: 0.0,
         }
     }
 
-    fn melee(slot: u8, chain: u32, channeling: bool) -> AbilitySnapshot {
+    fn swinging(slot: u8, state: u32) -> AbilitySnapshot {
         let mut ability = ability(slot, None, 0.0);
-        ability.melee_chain = chain;
-        ability.channeling = channeling;
+        ability.melee_state = state;
         ability
     }
 
-    fn parry_window(slot: u8, game_time: f32) -> AbilitySnapshot {
+    fn parry_success(slot: u8, game_time: f32) -> AbilitySnapshot {
         let mut ability = ability(slot, None, 0.0);
-        ability.parry_start = game_time;
-        ability.parry_success_end = 0.0;
+        ability.parry_success_end = game_time + 3.0;
         ability
     }
 
@@ -388,7 +452,6 @@ mod tests {
             kill_streak: 0,
             alive: true,
             health: 500,
-            melee_chain: 0,
         }
     }
 
@@ -406,6 +469,13 @@ mod tests {
         Snapshot {
             pawn: Some(pawn),
             players: Vec::new(),
+        }
+    }
+
+    fn with_players(pawn: PawnSnapshot, players: Vec<PlayerSnapshot>) -> Snapshot {
+        Snapshot {
+            pawn: Some(pawn),
+            players,
         }
     }
 
@@ -513,145 +583,278 @@ mod tests {
     }
 
     #[test]
-    fn attack_parried_edge_emits_parried() {
+    fn parry_success_window_edge_emits_parry() {
         let mut monitor = Monitor::new();
         monitor.update(track(vec![ability(22, None, 0.0)], 100.0), 1000);
-        let mut parried = ability(22, None, 0.0);
-        parried.attack_parried = true;
-        parried.parry_success_end = 105.0;
-        let events = monitor.update(track(vec![parried], 103.0), 1033);
+
+        let events = monitor.update(track(vec![parry_success(22, 100.0)], 100.5), 1033);
+        assert_eq!(kinds(&events), vec![EventKind::Parry]);
+
+        // The window is still open on later ticks — no re-emit.
+        let events = monitor.update(track(vec![parry_success(22, 100.0)], 101.0), 1100);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn stale_or_garbage_parry_success_timestamps_do_not_emit() {
+        let mut monitor = Monitor::new();
+        monitor.update(track(vec![ability(22, None, 0.0)], 100.0), 1000);
+
+        let events = monitor.update(track(vec![ability(22, None, 0.0)], 100.5), 1033);
+        assert!(events.is_empty());
+
+        let mut garbage = ability(22, None, 0.0);
+        garbage.parry_success_end = 100.0 + 10_000.0;
+        let events = monitor.update(track(vec![garbage], 100.5), 1033);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parry_field_that_rises_from_our_own_swing_is_not_a_parry() {
+        let mut monitor = Monitor::new();
+        monitor.update(track(vec![swinging(22, 3)], 100.0), 1000);
+
+        let mut rearmed = swinging(22, 3);
+        rearmed.parry_success_end = 103.0;
+        let events = monitor.update(track(vec![rearmed], 100.5), 1033);
+        assert!(events.is_empty());
+
+        let mut echoed = ability(22, None, 0.0);
+        echoed.parry_success_end = 103.0;
+        let events = monitor.update(track(vec![echoed], 101.0), 1200);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parry_field_rising_right_after_an_interrupt_is_hit_confirm_noise() {
+        // Punching someone: the interrupt flips on hit-confirm and the
+        // parry field rearms a tick later — neither is a parry.
+        let mut monitor = Monitor::new();
+        monitor.update(
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
+            1000,
+        );
+
+        let mut striking = pawn(true);
+        striking.abilities = vec![swinging(22, 3)];
+        let mut hit = player(0x20, false, 0, 0);
+        hit.health = 420;
+        let events = monitor.update(
+            with_players(striking, vec![player(0x10, true, 0, 0), hit]),
+            1033,
+        );
+        assert_eq!(kinds(&events), vec![EventKind::PunchLanded]);
+
+        let mut confirm = pawn(true);
+        confirm.interrupted = true;
+        confirm.abilities = vec![parry_success(22, 100.0)];
+        let events = monitor.update(
+            with_players(confirm, vec![player(0x10, true, 0, 0), hit]),
+            1066,
+        );
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn interrupt_during_our_swing_emits_parried_once_the_stun_holds() {
+        let mut monitor = Monitor::new();
+        monitor.update(track(vec![swinging(22, 3)], 100.0), 1000);
+
+        let mut countered = pawn(true);
+        countered.interrupted = true;
+        let events = monitor.update(bare(countered), 1033);
+        assert!(events.is_empty());
+
+        let mut held = pawn(true);
+        held.interrupted = true;
+        let events = monitor.update(bare(held), 1367);
         assert_eq!(kinds(&events), vec![EventKind::Parried]);
 
-        let events = monitor.update(track(vec![parried], 104.0), 1100);
+        let mut held = pawn(true);
+        held.interrupted = true;
+        let events = monitor.update(bare(held), 1400);
         assert!(events.is_empty());
     }
 
     #[test]
-    fn stale_parry_success_timestamp_does_not_emit() {
+    fn brief_hit_stop_from_our_own_landed_hit_is_not_parried() {
         let mut monitor = Monitor::new();
-        monitor.update(track(vec![ability(22, None, 0.0)], 100.0), 1000);
-        let mut garbage = ability(22, None, 0.0);
-        garbage.attack_parried = true;
-        garbage.parry_success_end = 0.0;
-        let events = monitor.update(track(vec![garbage], 100.0), 1033);
+        monitor.update(
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
+            1000,
+        );
+
+        let mut confirm = pawn(true);
+        confirm.interrupted = true;
+        let mut hit = player(0x20, false, 0, 0);
+        hit.health = 420;
+        monitor.update(
+            with_players(confirm, vec![player(0x10, true, 0, 0), hit]),
+            1033,
+        );
+
+        let mut cleared = pawn(true);
+        cleared.abilities = vec![swinging(22, 0)];
+        let events = monitor.update(
+            with_players(cleared, vec![player(0x10, true, 0, 0), hit]),
+            1166,
+        );
         assert!(events.is_empty());
     }
 
     #[test]
-    fn interrupt_during_parry_window_emits_parry() {
-        let mut monitor = Monitor::new();
-        monitor.update(track(vec![parry_window(22, 100.0)], 100.0), 1000);
-
-        let mut stunned = pawn(true);
-        stunned.interrupted = true;
-        stunned.abilities = vec![parry_window(22, 100.0)];
-        let events = monitor.update(bare(stunned), 1200);
-        assert_eq!(kinds(&events), vec![EventKind::Parry]);
-    }
-
-    #[test]
-    fn interrupt_from_a_punch_does_not_emit_parry() {
-        let mut monitor = Monitor::new();
-        monitor.update(track(vec![melee(22, 0, true)], 100.0), 1000);
-        let mut stunned = pawn(true);
-        stunned.interrupted = true;
-        let events = monitor.update(bare(stunned), 1200);
-        assert!(events.is_empty());
-    }
-
-    #[test]
-    fn interrupt_without_recent_melee_does_not_emit_parry() {
+    fn interrupt_without_our_melee_in_motion_is_not_parried() {
         let mut monitor = Monitor::new();
         monitor.update(track(vec![ability(0, None, 0.0)], 100.0), 1000);
         let mut stunned = pawn(true);
         stunned.interrupted = true;
-        let events = monitor.update(bare(stunned), 1200);
+        monitor.update(bare(stunned), 1033);
+        let mut held = pawn(true);
+        held.interrupted = true;
+        let events = monitor.update(bare(held), 1700);
         assert!(events.is_empty());
     }
 
     #[test]
-    fn melee_chain_increment_emits_punch_landed() {
+    fn interrupt_with_damage_taken_is_a_trade_not_a_parry() {
         let mut monitor = Monitor::new();
-        monitor.update(track(vec![melee(22, 0, true)], 100.0), 1000);
-        let events = monitor.update(track(vec![melee(22, 1, true)], 100.0), 1033);
-        assert_eq!(kinds(&events), vec![EventKind::PunchLanded]);
-        let events = monitor.update(track(vec![melee(22, 0, true)], 100.0), 1100);
+        monitor.update(track(vec![swinging(22, 3)], 100.0), 1000);
+
+        let mut traded = pawn(true);
+        traded.health = 380;
+        traded.interrupted = true;
+        monitor.update(bare(traded), 1033);
+        let mut held = pawn(true);
+        held.health = 380;
+        held.interrupted = true;
+        let events = monitor.update(bare(held), 1700);
         assert!(events.is_empty());
     }
 
     #[test]
-    fn enemy_health_drop_during_our_melee_emits_punch_landed() {
+    fn enemy_health_drop_during_our_swing_emits_punch_landed() {
         let mut monitor = Monitor::new();
         monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
-            },
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
             1000,
         );
-        monitor.update(track(vec![melee(22, 0, true)], 100.0), 1033);
+
+        let mut striking = pawn(true);
+        striking.abilities = vec![swinging(22, 2)];
+        let mut hit = player(0x20, false, 0, 0);
+        hit.health = 420;
+        let events = monitor.update(
+            with_players(striking, vec![player(0x10, true, 0, 0), hit]),
+            1033,
+        );
+        assert_eq!(kinds(&events), vec![EventKind::PunchLanded]);
+
+        let mut striking = pawn(true);
+        striking.abilities = vec![swinging(22, 2)];
+        let events = monitor.update(
+            with_players(striking, vec![player(0x10, true, 0, 0), hit]),
+            1066,
+        );
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn punch_landed_still_fires_when_the_state_cleared_before_the_damage_showed() {
+        let mut monitor = Monitor::new();
+        let mut recent = pawn(true);
+        recent.abilities = vec![parry_success(22, 100.0)];
+        monitor.update(
+            with_players(recent, vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)]),
+            1000,
+        );
+
+        let mut cleared = pawn(true);
+        cleared.game_time = 101.0;
+        cleared.abilities = vec![parry_success(22, 100.0)];
+        let mut hit = player(0x20, false, 0, 0);
+        hit.health = 420;
+        let events = monitor.update(
+            with_players(cleared, vec![player(0x10, true, 0, 0), hit]),
+            1033,
+        );
+        assert_eq!(kinds(&events), vec![EventKind::PunchLanded]);
+    }
+
+    #[test]
+    fn enemy_health_drop_without_our_swing_is_not_punch_landed() {
+        let mut monitor = Monitor::new();
+        monitor.update(
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
+            1000,
+        );
 
         let mut hit = player(0x20, false, 0, 0);
         hit.health = 420;
         let events = monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 0, 0), hit],
-            },
-            1066,
+            with_players(pawn(true), vec![player(0x10, true, 0, 0), hit]),
+            1033,
         );
-        assert_eq!(kinds(&events), vec![EventKind::PunchLanded]);
+        assert!(events.is_empty());
+    }
 
-        let mut hit_again = player(0x20, false, 0, 0);
-        hit_again.health = 300;
+    #[test]
+    fn melee_threat_on_damage_emits_punch_taken() {
+        let mut monitor = Monitor::new();
+        monitor.update(
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
+            1000,
+        );
+
+        let mut punched = pawn(true);
+        punched.health = 380;
+        punched.melee_threat = true;
         let events = monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 0, 0), hit_again],
-            },
+            with_players(
+                punched,
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
+            1033,
+        );
+        assert_eq!(kinds(&events), vec![EventKind::PunchTaken]);
+
+        // Bullet damage — the reader found no enemy melee in motion.
+        let mut shot = pawn(true);
+        shot.health = 300;
+        let events = monitor.update(
+            with_players(
+                shot,
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
             5000,
         );
         assert!(events.is_empty());
     }
 
     #[test]
-    fn player_damage_during_enemy_melee_emits_punch_taken() {
+    fn punch_taken_is_suppressed_during_the_respawn_settle_window() {
         let mut monitor = Monitor::new();
-        let mut enemy = player(0x20, false, 0, 0);
-        enemy.melee_chain = 0;
-        monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 0, 0), enemy],
-            },
-            1000,
-        );
+        monitor.update(track(vec![], 100.0), 1000);
+        monitor.update(bare(pawn(false)), 1100);
+        monitor.update(bare(pawn(true)), 3000);
 
-        let mut swinging = player(0x20, false, 0, 0);
-        swinging.melee_chain = 1;
         let mut punched = pawn(true);
-        punched.health = 380;
-        punched.damage_taken_time = 100.2;
-        let events = monitor.update(
-            Snapshot {
-                pawn: Some(punched),
-                players: vec![player(0x10, true, 0, 0), swinging],
-            },
-            1033,
-        );
-        assert_eq!(kinds(&events), vec![EventKind::PunchTaken]);
-
-        let idle_enemy = player(0x20, false, 0, 0);
-        let mut shot = pawn(true);
-        shot.health = 300;
-        shot.damage_taken_time = 100.5;
-        let events = monitor.update(
-            Snapshot {
-                pawn: Some(shot),
-                players: vec![player(0x10, true, 0, 0), idle_enemy],
-            },
-            5000,
-        );
+        punched.melee_threat = true;
+        let events = monitor.update(bare(punched), 3200);
         assert!(events.is_empty());
     }
 
@@ -659,18 +862,18 @@ mod tests {
     fn local_player_kill_and_assist_increments_emit_events() {
         let mut monitor = Monitor::new();
         monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
-            },
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
             1000,
         );
 
         let events = monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 2, 1), player(0x20, false, 0, 0)],
-            },
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 2, 1), player(0x20, false, 0, 0)],
+            ),
             1100,
         );
         assert_eq!(
@@ -683,17 +886,17 @@ mod tests {
     fn other_players_kills_do_not_emit() {
         let mut monitor = Monitor::new();
         monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
-            },
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 0, 0), player(0x20, false, 0, 0)],
+            ),
             1000,
         );
         let events = monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 0, 0), player(0x20, false, 3, 0)],
-            },
+            with_players(
+                pawn(true),
+                vec![player(0x10, true, 0, 0), player(0x20, false, 3, 0)],
+            ),
             1100,
         );
         assert!(events.is_empty());
@@ -703,10 +906,7 @@ mod tests {
     fn new_players_baseline_without_events() {
         let mut monitor = Monitor::new();
         let events = monitor.update(
-            Snapshot {
-                pawn: Some(pawn(true)),
-                players: vec![player(0x10, true, 9, 7)],
-            },
+            with_players(pawn(true), vec![player(0x10, true, 9, 7)]),
             1000,
         );
         assert!(events.is_empty());

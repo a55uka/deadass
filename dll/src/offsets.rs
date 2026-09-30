@@ -41,7 +41,7 @@ pub struct Offsets {
     /// our cast was interrupted — includes getting parried.
     pub pawn_interrupt_state: u64,
     /// CCitadelRecentDamage.m_flLastDamageTime inside m_sPlayerDamageTaken
-    /// (pawn + 0x1480 + 0x8): game time when a PLAYER last damaged us.
+    /// (pawn + 0x13E0 + 0x8): game time when a PLAYER last damaged us.
     pub pawn_damage_taken_time: u64,
     /// Embedded CCitadelAbilityComponent at pawn + this offset.
     pub pawn_ability_component: u64,
@@ -49,20 +49,18 @@ pub struct Offsets {
     pub abilities_vector: u64,
     /// C_CitadelBaseAbility field offsets.
     pub ability_channeling: u64,
+    /// Written when a melee swing starts; the punch-taken sweep uses it as
+    /// the "swung recently" timestamp on enemy melee abilities.
     pub ability_cooldown_start: u64,
     pub ability_cooldown_end: u64,
     pub ability_slot: u64,
     pub ability_charges: u64,
-    /// CCitadel_Ability_MeleeParry fields (meaningful only on the parry
-    /// ability entity; read on every ability and gated by freshness).
-    pub ability_parry_start: u64,
-    pub ability_attack_parried: u64,
+    /// CCitadel_Ability_MeleeParry.m_flParrySuccessEndTime: while ahead of
+    /// the game clock, a parry we threw just caught an attack.
     pub ability_parry_success_end: u64,
-    /// CCitadel_Ability_HoldMelee melee state (EMeleeHold_AttackState).
+    /// CCitadel_Ability_HoldMelee.m_eCurrentAttackState (EMeleeHold_AttackState)
+    /// — nonzero while a melee swing is in flight.
     pub ability_melee_state: u64,
-    /// CCitadel_Ability_HoldMelee.m_nLightChainCount — increments on landed
-    /// light melee hits.
-    pub ability_melee_chain: u64,
     /// The weapon-melee ability slot (ESlot_Weapon_Melee).
     pub melee_slot: u8,
     /// Highest ability slot tracked for parry detection (slots beyond the
@@ -90,43 +88,40 @@ impl Default for Offsets {
         Self {
             dll_port: DEFAULT_DLL_PORT,
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            local_pawn_global: 0x2f193f8,
-            entity_system_global: 0x30ebdc8,
+            local_pawn_global: 0x3237c58,
+            entity_system_global: 0x33e37c0,
             entity_chunk_array: 0x10,
             entity_chunk_size: 512,
             entity_stride: 0x70,
             pawn_health: 0x354,
             pawn_max_health: 0x350,
             pawn_life_state: 0x35C,
-            pawn_team: 0x3F3,
+            pawn_team: 0x3EF,
             pawn_sim_time: 0x3C0,
-            pawn_controller_handle: 0x10B0,
-            pawn_interrupt_state: 0x14D0 + 0xE4,
-            pawn_damage_taken_time: 0x1480 + 0x8,
-            pawn_ability_component: 0x14D0,
-            abilities_vector: 0x1538,
-            ability_channeling: 0x740,
-            ability_cooldown_start: 0x764,
-            ability_cooldown_end: 0x768,
-            ability_slot: 0x778,
-            ability_charges: 0x780,
-            ability_parry_start: 0x11DC,
-            ability_attack_parried: 0x11E0,
-            ability_parry_success_end: 0x11E4,
-            ability_melee_state: 0x12F0,
-            ability_melee_chain: 0x130C,
+            pawn_controller_handle: 0xFF8,
+            pawn_interrupt_state: 0x1438 + 0xE4,
+            pawn_damage_taken_time: 0x13E0 + 0x8,
+            pawn_ability_component: 0x1438,
+            abilities_vector: 0x14A0,
+            ability_channeling: 0x748,
+            ability_cooldown_start: 0x768,
+            ability_cooldown_end: 0x76C,
+            ability_slot: 0x77C,
+            ability_charges: 0x784,
+            ability_parry_success_end: 0x16E4,
+            ability_melee_state: 0x1850,
             melee_slot: 22,
             max_ability_slot: 22,
             schema_resolved: false,
-            controller_player_data: 0x8F0,
+            controller_player_data: 0x908,
             controller_pawn_handle: 0x6BC,
-            player_health: 0x50,
+            player_health: 0x54,
             player_hero_id: 0x1C,
-            player_kills: 0x54,
-            player_assists: 0x58,
-            player_deaths: 0x5C,
-            player_kill_streak: 0x68,
-            player_alive: 0x6C,
+            player_kills: 0x58,
+            player_assists: 0x60,
+            player_deaths: 0x64,
+            player_kill_streak: 0x70,
+            player_alive: 0x74,
         }
     }
 }
@@ -195,11 +190,8 @@ struct AbilitySection {
     cooldown_end: Option<Hex>,
     slot: Option<Hex>,
     charges: Option<Hex>,
-    parry_start: Option<Hex>,
-    attack_parried: Option<Hex>,
     parry_success_end: Option<Hex>,
     melee_state: Option<Hex>,
-    melee_chain: Option<Hex>,
     melee_slot: Option<u8>,
     max_slot: Option<u8>,
 }
@@ -373,24 +365,12 @@ impl Offsets {
             apply(&mut self.ability_slot, ability.slot.map(Hex::value));
             apply(&mut self.ability_charges, ability.charges.map(Hex::value));
             apply(
-                &mut self.ability_parry_start,
-                ability.parry_start.map(Hex::value),
-            );
-            apply(
-                &mut self.ability_attack_parried,
-                ability.attack_parried.map(Hex::value),
-            );
-            apply(
                 &mut self.ability_parry_success_end,
                 ability.parry_success_end.map(Hex::value),
             );
             apply(
                 &mut self.ability_melee_state,
                 ability.melee_state.map(Hex::value),
-            );
-            apply(
-                &mut self.ability_melee_chain,
-                ability.melee_chain.map(Hex::value),
             );
             apply(&mut self.melee_slot, ability.melee_slot);
             apply(&mut self.max_ability_slot, ability.max_slot);
@@ -485,5 +465,87 @@ mod tests {
         let value: Hex = serde_json::from_str("16").unwrap();
         assert_eq!(value.0, 16);
         assert!(serde_json::from_str::<Hex>("\"zz\"").is_err());
+    }
+
+    /// The complete file schema_extract.py emits must parse every section and
+    /// every key; catches generator/parser key-name drift (an unparsed key
+    /// would silently leave a stale baked value live).
+    #[test]
+    fn full_extractor_file_overlays_every_offset() {
+        let mut offsets = Offsets::default();
+        offsets
+            .overlay(
+                r#"
+                [globals]
+                local_pawn = "0x3237c58"
+                entity_system = "0x33e37c0"
+
+                [entity_list]
+                chunk_array = "0x10"
+                chunk_size = 512
+                stride = "0x70"
+
+                [pawn]
+                health = "0x354"
+                max_health = "0x350"
+                life_state = "0x35c"
+                team = "0x3ef"
+                sim_time = "0x3c0"
+                controller_handle = "0xff8"
+                ability_component = "0x1438"
+                abilities = "0x14a0"
+                interrupt_state = "0x151c"
+                damage_taken_time = "0x13e8"
+
+                [ability]
+                channeling = "0x748"
+                cooldown_start = "0x768"
+                cooldown_end = "0x76c"
+                slot = "0x77c"
+                charges = "0x784"
+                parry_success_end = "0x16e4"
+                melee_state = "0x1850"
+                melee_slot = 22
+                max_slot = 22
+
+                [controller]
+                player_data = "0x908"
+                pawn_handle = "0x6bc"
+                health = "0x54"
+                hero_id = "0x1c"
+                kills = "0x58"
+                assists = "0x60"
+                deaths = "0x64"
+                kill_streak = "0x70"
+                alive = "0x74"
+                "#,
+            )
+            .expect("full extractor file parses");
+        assert_eq!(offsets.local_pawn_global, 0x3237c58);
+        assert_eq!(offsets.entity_system_global, 0x33e37c0);
+        assert_eq!(offsets.entity_stride, 0x70);
+        assert_eq!(offsets.pawn_health, 0x354);
+        assert_eq!(offsets.pawn_team, 0x3EF);
+        assert_eq!(offsets.pawn_controller_handle, 0xFF8);
+        assert_eq!(offsets.pawn_interrupt_state, 0x1438 + 0xE4);
+        assert_eq!(offsets.pawn_damage_taken_time, 0x13E0 + 0x8);
+        assert_eq!(offsets.pawn_ability_component, 0x1438);
+        assert_eq!(offsets.abilities_vector, 0x14A0);
+        assert_eq!(offsets.ability_channeling, 0x748);
+        assert_eq!(offsets.ability_cooldown_end, 0x76C);
+        assert_eq!(offsets.ability_slot, 0x77C);
+        assert_eq!(offsets.ability_charges, 0x784);
+        assert_eq!(offsets.ability_parry_success_end, 0x16E4);
+        assert_eq!(offsets.ability_melee_state, 0x1850);
+        assert_eq!(offsets.melee_slot, 22);
+        assert_eq!(offsets.max_ability_slot, 22);
+        assert_eq!(offsets.controller_player_data, 0x908);
+        assert_eq!(offsets.controller_pawn_handle, 0x6BC);
+        assert_eq!(offsets.player_health, 0x54);
+        assert_eq!(offsets.player_kills, 0x58);
+        assert_eq!(offsets.player_assists, 0x60);
+        assert_eq!(offsets.player_deaths, 0x64);
+        assert_eq!(offsets.player_kill_streak, 0x70);
+        assert_eq!(offsets.player_alive, 0x74);
     }
 }

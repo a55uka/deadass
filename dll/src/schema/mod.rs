@@ -45,14 +45,6 @@ const DIRECT_FIELDS: &[(&str, &str, Setter)] = &[
     }),
     (
         "CCitadel_Ability_MeleeParry",
-        "m_flParryStartTime",
-        |o, v| o.ability_parry_start = v,
-    ),
-    ("CCitadel_Ability_MeleeParry", "m_bAttackParried", |o, v| {
-        o.ability_attack_parried = v
-    }),
-    (
-        "CCitadel_Ability_MeleeParry",
         "m_flParrySuccessEndTime",
         |o, v| o.ability_parry_success_end = v,
     ),
@@ -60,11 +52,6 @@ const DIRECT_FIELDS: &[(&str, &str, Setter)] = &[
         "CCitadel_Ability_HoldMelee",
         "m_eCurrentAttackState",
         |o, v| o.ability_melee_state = v,
-    ),
-    (
-        "CCitadel_Ability_HoldMelee",
-        "m_nLightChainCount",
-        |o, v| o.ability_melee_chain = v,
     ),
     ("CCitadelPlayerController", "m_PlayerDataGlobal", |o, v| {
         o.controller_player_data = v

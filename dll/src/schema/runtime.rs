@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::OnceLock;
 
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 
@@ -16,6 +17,41 @@ struct SchemaRuntime {
     scope: *mut c_void,
     find_class: FindDeclaredClassFn,
     classes: HashMap<String, HashMap<String, u32>>,
+}
+
+fn resolver_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("DEADASS_DLL_SCHEMA_RESOLVER").is_ok_and(|v| v == "1"))
+}
+
+fn module_span(name: &str) -> Option<(u64, u64)> {
+    let base = unsafe { GetModuleHandleA(wide(name).as_ptr()) } as u64;
+    if base == 0 {
+        return None;
+    }
+    let read_u32 = |address: u64| -> Option<u32> {
+        if !pages_committed(address, 4) {
+            return None;
+        }
+        Some(u32::from_le_bytes(unsafe {
+            std::slice::from_raw_parts(address as *const u8, 4)
+                .try_into()
+                .ok()?
+        }))
+    };
+    let e_lfanew = read_u32(base + 0x3C)? as u64;
+    let size = read_u32(base + e_lfanew + 0x50)? as u64;
+    if size == 0 || size > (1 << 30) {
+        return None;
+    }
+    Some((base, base + size))
+}
+
+fn in_span(span: Option<(u64, u64)>, address: u64) -> bool {
+    match span {
+        Some((base, end)) => address >= base && address < end,
+        None => false,
+    }
 }
 
 fn page_checked(address: u64, len: usize) -> Option<&'static [u8]> {
@@ -76,9 +112,14 @@ impl SchemaRuntime {
 
         // CSchemaSystem::FindTypeScope(module_name, nullptr): vtable slot 13
         let system_vtable = read_u64(system as u64)?;
-        let find_type_scope = unsafe {
-            std::mem::transmute::<u64, FindTypeScopeFn>(read_u64(system_vtable + 13 * 8)?)
-        };
+        let system_span = module_span("schemasystem.dll");
+        let find_type_scope_address = read_u64(system_vtable + 13 * 8)?;
+        if !in_span(system_span, find_type_scope_address) {
+            // Slot no longer holds a schemasystem function: layout shifted.
+            return None;
+        }
+        let find_type_scope =
+            unsafe { std::mem::transmute::<u64, FindTypeScopeFn>(find_type_scope_address) };
         let scope =
             unsafe { find_type_scope(system, wide("client.dll").as_ptr(), std::ptr::null_mut()) };
         if scope.is_null() {
@@ -87,9 +128,12 @@ impl SchemaRuntime {
 
         // Scope::FindDeclaredClass(out, class_name): vtable slot 2
         let scope_vtable = read_u64(scope as u64)?;
-        let find_class = unsafe {
-            std::mem::transmute::<u64, FindDeclaredClassFn>(read_u64(scope_vtable + 2 * 8)?)
-        };
+        let find_class_address = read_u64(scope_vtable + 2 * 8)?;
+        if !in_span(system_span, find_class_address) {
+            return None;
+        }
+        let find_class =
+            unsafe { std::mem::transmute::<u64, FindDeclaredClassFn>(find_class_address) };
 
         Some(Self {
             scope,
@@ -143,6 +187,9 @@ impl SchemaRuntime {
 /// schema system was reachable and at least a few fields resolved (the
 /// caller stops retrying); individual misses keep their baked values
 pub fn apply_schema(offsets: &mut Offsets) -> bool {
+    if !resolver_enabled() {
+        return false;
+    }
     let Some(mut runtime) = SchemaRuntime::attach() else {
         return false;
     };
