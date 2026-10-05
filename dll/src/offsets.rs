@@ -88,8 +88,8 @@ impl Default for Offsets {
         Self {
             dll_port: DEFAULT_DLL_PORT,
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            local_pawn_global: 0x3237c58,
-            entity_system_global: 0x33e37c0,
+            local_pawn_global: 0x3279bd8,
+            entity_system_global: 0x3426030,
             entity_chunk_array: 0x10,
             entity_chunk_size: 512,
             entity_stride: 0x70,
@@ -98,11 +98,11 @@ impl Default for Offsets {
             pawn_life_state: 0x35C,
             pawn_team: 0x3EF,
             pawn_sim_time: 0x3C0,
-            pawn_controller_handle: 0xFF8,
-            pawn_interrupt_state: 0x1438 + 0xE4,
-            pawn_damage_taken_time: 0x13E0 + 0x8,
-            pawn_ability_component: 0x1438,
-            abilities_vector: 0x14A0,
+            pawn_controller_handle: 0x1050,
+            pawn_interrupt_state: 0x1440 + 0xE4,
+            pawn_damage_taken_time: 0x13E8 + 0x8,
+            pawn_ability_component: 0x1440,
+            abilities_vector: 0x14A8,
             ability_channeling: 0x748,
             ability_cooldown_start: 0x768,
             ability_cooldown_end: 0x76C,
@@ -477,8 +477,8 @@ mod tests {
             .overlay(
                 r#"
                 [globals]
-                local_pawn = "0x3237c58"
-                entity_system = "0x33e37c0"
+                local_pawn = "0x3279bd8"
+                entity_system = "0x3426030"
 
                 [entity_list]
                 chunk_array = "0x10"
@@ -491,11 +491,11 @@ mod tests {
                 life_state = "0x35c"
                 team = "0x3ef"
                 sim_time = "0x3c0"
-                controller_handle = "0xff8"
-                ability_component = "0x1438"
-                abilities = "0x14a0"
-                interrupt_state = "0x151c"
-                damage_taken_time = "0x13e8"
+                controller_handle = "0x1050"
+                ability_component = "0x1440"
+                abilities = "0x14a8"
+                interrupt_state = "0x1524"
+                damage_taken_time = "0x13f0"
 
                 [ability]
                 channeling = "0x748"
@@ -521,16 +521,16 @@ mod tests {
                 "#,
             )
             .expect("full extractor file parses");
-        assert_eq!(offsets.local_pawn_global, 0x3237c58);
-        assert_eq!(offsets.entity_system_global, 0x33e37c0);
+        assert_eq!(offsets.local_pawn_global, 0x3279bd8);
+        assert_eq!(offsets.entity_system_global, 0x3426030);
         assert_eq!(offsets.entity_stride, 0x70);
         assert_eq!(offsets.pawn_health, 0x354);
         assert_eq!(offsets.pawn_team, 0x3EF);
-        assert_eq!(offsets.pawn_controller_handle, 0xFF8);
-        assert_eq!(offsets.pawn_interrupt_state, 0x1438 + 0xE4);
-        assert_eq!(offsets.pawn_damage_taken_time, 0x13E0 + 0x8);
-        assert_eq!(offsets.pawn_ability_component, 0x1438);
-        assert_eq!(offsets.abilities_vector, 0x14A0);
+        assert_eq!(offsets.pawn_controller_handle, 0x1050);
+        assert_eq!(offsets.pawn_interrupt_state, 0x1440 + 0xE4);
+        assert_eq!(offsets.pawn_damage_taken_time, 0x13E8 + 0x8);
+        assert_eq!(offsets.pawn_ability_component, 0x1440);
+        assert_eq!(offsets.abilities_vector, 0x14A8);
         assert_eq!(offsets.ability_channeling, 0x748);
         assert_eq!(offsets.ability_cooldown_end, 0x76C);
         assert_eq!(offsets.ability_slot, 0x77C);
