@@ -38,8 +38,8 @@ psapi.GetModuleFileNameExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.
 
 # Fallbacks used only when auto-discovery cannot run (e.g. pawn discovery
 # needs a live match). Update after a fresh dump if you skip discovery.
-KNOWN_PAWN_GLOBAL = 0x3279BD8
-KNOWN_ES_GLOBAL = 0x3426030
+KNOWN_PAWN_GLOBAL = 0x32C59D8
+KNOWN_ES_GLOBAL = 0x3474830
 
 out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq deadlock.exe", "/FO", "CSV"], capture_output=True, text=True).stdout
 lines = [l for l in out.splitlines() if "deadlock" in l.lower()]
@@ -120,6 +120,11 @@ WRITABLE = data_sections()
 
 # ---- global discovery ----
 def entity_system_looks_like(value):
+    """Candidate must (a) point to a heap object whose inline chunk array
+    holds chunk pointers to client-vtable entities, and (b) those records
+    back-pointer to their own chunk slot (record+0x10 == &chunk[slot]).
+    Multiple systems share structure (a); (b) plus vtable diversity scoring
+    separates the main CGameEntitySystem."""
     if not is_heap_ptr(value):
         return False
     chunk0 = live_u64(value + 0x10)
@@ -132,14 +137,59 @@ def entity_system_looks_like(value):
             good += 1
     return good >= 2
 
+def backpointer_score(value):
+    """(hits, misses) for record+0x10 == &chunk[slot] over chunk0 slots"""
+    chunk0 = live_u64(value + 0x10)
+    if not is_heap_ptr(chunk0):
+        return 0, 0
+    hits = misses = 0
+    for slot in range(8):
+        record = live_u64(chunk0 + slot * 0x70)
+        if not record or not committed(record):
+            continue
+        if live_u64(record + 0x10) == chunk0 + slot * 0x70 and \
+                BASE <= live_u64(record) < BASE + IMG_SIZE:
+            hits += 1
+        else:
+            misses += 1
+    return hits, misses
+
+def vtable_diversity(value):
+    """distinct client vtables across the first chunks — the main system
+    holds the diverse world entities"""
+    seen = set()
+    for chunk_i in range(8):
+        chunk = live_u64(value + 0x10 + chunk_i * 8)
+        if not is_heap_ptr(chunk):
+            continue
+        for slot in range(512):
+            record = live_u64(chunk + slot * 0x70)
+            if record and committed(record):
+                vt = live_u64(record)
+                if BASE <= vt < BASE + IMG_SIZE:
+                    seen.add(vt)
+    return len(seen)
+
 def discover_entity_system():
-    matches = []
+    candidates = []
     for name, start, size in WRITABLE:
         for off in range(start, start + size - 8, 8):
             value = struct.unpack_from("<Q", image, off)[0]
             if 0x10000000000 <= value < 0x7FF000000000 and entity_system_looks_like(value):
-                matches.append((off, value))
-    return matches
+                candidates.append((off, value))
+    verified = []
+    for off, value in candidates:
+        hits, misses = backpointer_score(value)
+        if hits >= 2 and misses == 0:
+            verified.append((off, value))
+    # rank by vtable diversity: the main entity system holds the most
+    # varied world entities
+    ranked = sorted(verified, key=lambda c: -vtable_diversity(c[1]))
+    for off, value in ranked[1:]:
+        print(f"# note: additional entity-system candidate client+0x{off:X} "
+              f"(diversity {vtable_diversity(value)}) — main system picked by vtable diversity",
+              file=sys.stderr)
+    return ranked
 
 def resolve_entity(handle, es_value):
     index = handle & 0x7FFF
@@ -152,7 +202,21 @@ def vtable_of(entity):
     value = live_u64(entity)
     return value if BASE <= value < BASE + IMG_SIZE else 0
 
-def discover_pawn_global(es_value, controller_handle_off):
+def looks_like_pawn(value, es_value, health_off, max_health_off, controller_off):
+    """client-vtable entity with plausible health and a controller handle
+    that resolves to an entity of the same class"""
+    if not is_heap_ptr(value):
+        return False
+    if not (BASE <= live_u64(value) < BASE + IMG_SIZE):
+        return False
+    max_hp = struct.unpack("<i", struct.pack("<I", live_u32(value + max_health_off)))[0]
+    hp = struct.unpack("<i", struct.pack("<I", live_u32(value + health_off)))[0]
+    if not (100 <= max_hp <= 100000 and 0 < hp <= max_hp):
+        return False
+    controller = resolve_entity(live_u32(value + controller_off), es_value)
+    return bool(controller) and vtable_of(controller) == live_u64(value)
+
+def discover_pawn_global(es_value, health_off, max_health_off, controller_off):
     entities = set()
     for chunk_i in range(8):
         chunk = live_u64(es_value + 0x10 + chunk_i * 8)
@@ -162,20 +226,14 @@ def discover_pawn_global(es_value, controller_handle_off):
             entity = live_u64(chunk + slot * 0x70)
             if entity:
                 entities.add(entity)
+    matches = []
     for name, start, size in WRITABLE:
         for off in range(start, start + size - 8, 8):
             value = struct.unpack_from("<Q", image, off)[0]
-            if value not in entities:
-                continue
-            if not is_heap_ptr(value):
-                continue
-            pawn_vtable = vtable_of(value)
-            if not pawn_vtable:
-                continue
-            controller = resolve_entity(live_u32(value + controller_handle_off), es_value)
-            if controller and vtable_of(controller) == pawn_vtable:
-                return off, value
-    return None
+            if value in entities and looks_like_pawn(
+                    value, es_value, health_off, max_health_off, controller_off):
+                matches.append((off, value))
+    return matches
 
 # ---- recv-table field extraction ----
 def cstring_at(pos):
@@ -283,30 +341,40 @@ for group, items in fields.items():
 
 # ---- globals: discover, fall back to known ----
 es_matches = discover_entity_system()
-pawn_handle_off = fields["pawn"]["controller_handle"]["offset"] if fields["pawn"]["controller_handle"] else None
+pawn_fields = fields["pawn"]
+health_off = pawn_fields["health"]["offset"] if pawn_fields["health"] else 0x354
+max_health_off = pawn_fields["max_health"]["offset"] if pawn_fields["max_health"] else 0x350
+controller_off = pawn_fields["controller_handle"]["offset"] if pawn_fields["controller_handle"] else 0x1050
 
+PAWN_GLOBAL = KNOWN_PAWN_GLOBAL
 if es_matches:
     es_offset, es_value = es_matches[0]
     if len(es_matches) > 1:
-        print(f"# note: {len(es_matches)} entity-system candidates, using first", file=sys.stderr)
+        print(f"# note: {len(es_matches)} entity-system candidates, ranked by vtable diversity",
+              file=sys.stderr)
     print(f"# entity system global DISCOVERED at client+0x{es_offset:X} -> 0x{es_value:X}",
           file=sys.stderr)
     ES_GLOBAL = es_offset
-    pawn_found = None
-    if pawn_handle_off:
-        pawn_found = discover_pawn_global(es_value, pawn_handle_off)
-    if pawn_found:
-        pawn_offset, pawn_value = pawn_found
-        print(f"# local pawn global DISCOVERED at client+0x{pawn_offset:X} -> 0x{pawn_value:X}",
+
+    known_value = live_u64(BASE + KNOWN_PAWN_GLOBAL)
+    if looks_like_pawn(known_value, es_value, health_off, max_health_off, controller_off):
+        print(f"# known pawn global client+0x{KNOWN_PAWN_GLOBAL:X} validated in place",
               file=sys.stderr)
-        PAWN_GLOBAL = pawn_offset
     else:
-        PAWN_GLOBAL = KNOWN_PAWN_GLOBAL
-        print(f"# pawn global not discovered (menu?): get into a match and re-run;"
-              f" keeping known client+0x{KNOWN_PAWN_GLOBAL:X}", file=sys.stderr)
+        pawn_matches = discover_pawn_global(es_value, health_off, max_health_off, controller_off)
+        if pawn_matches:
+            PAWN_GLOBAL = pawn_matches[0][0]
+            others = ", ".join(f"client+0x{off:X}" for off, _ in pawn_matches[1:5])
+            print(f"# pawn global DISCOVERED at client+0x{PAWN_GLOBAL:X}"
+                  + (f" (aliases: {others})" if others else ""), file=sys.stderr)
+            print(f"# update KNOWN_PAWN_GLOBAL in this script to {PAWN_GLOBAL:#x} for menu fallbacks",
+                  file=sys.stderr)
+        else:
+            print(f"# pawn global not found (menu, or not spawned yet?); keeping known "
+                  f"client+0x{KNOWN_PAWN_GLOBAL:X} — get into a match and re-run to confirm",
+                  file=sys.stderr)
 else:
     ES_GLOBAL = KNOWN_ES_GLOBAL
-    PAWN_GLOBAL = KNOWN_PAWN_GLOBAL
     print(f"# entity system NOT discovered (game still loading?); keeping known"
           f" client+0x{KNOWN_ES_GLOBAL:X} — verify it dereferences to a live object",
           file=sys.stderr)
