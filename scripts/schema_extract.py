@@ -38,8 +38,8 @@ psapi.GetModuleFileNameExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.
 
 # Fallbacks used only when auto-discovery cannot run (e.g. pawn discovery
 # needs a live match). Update after a fresh dump if you skip discovery.
-KNOWN_PAWN_GLOBAL = 0x32C59D8
-KNOWN_ES_GLOBAL = 0x3474830
+KNOWN_PAWN_GLOBAL = 0x32C5958
+KNOWN_ES_GLOBAL = 0x34747B0
 
 out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq deadlock.exe", "/FO", "CSV"], capture_output=True, text=True).stdout
 lines = [l for l in out.splitlines() if "deadlock" in l.lower()]
