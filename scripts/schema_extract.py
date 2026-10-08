@@ -12,12 +12,12 @@ signature — no dezlock dump needed:
     chunk array (+0x10) holds chunk pointers to entity slots with client
     vtables.
   local pawn: a client.dll data pointer whose value is an entity in the
-    entity list whose controller handle resolves back to a controller with
-    the same vtable. Needs a live match; in the menu the last known value
-    is kept.
+    entity list whose controller handle resolves to a controller whose
+    m_hPawn points back at the same entity. Needs a live match; in the
+    menu the last known value is kept.
 
-Usage (game running):
-    python scripts/schema_extract.py > deadass-offsets.toml
+Usage (game running, from the deadass repo root):
+    python scripts/schema_extract.py > target/release/deadass-offsets.toml
 Field candidates and discovery notes go to stderr.
 """
 
@@ -38,8 +38,8 @@ psapi.GetModuleFileNameExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.
 
 # Fallbacks used only when auto-discovery cannot run (e.g. pawn discovery
 # needs a live match). Update after a fresh dump if you skip discovery.
-KNOWN_PAWN_GLOBAL = 0x32C5958
-KNOWN_ES_GLOBAL = 0x34747B0
+KNOWN_PAWN_GLOBAL = 0x32c5958
+KNOWN_ES_GLOBAL = 0x34747b0
 
 out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq deadlock.exe", "/FO", "CSV"], capture_output=True, text=True).stdout
 lines = [l for l in out.splitlines() if "deadlock" in l.lower()]
@@ -202,21 +202,27 @@ def vtable_of(entity):
     value = live_u64(entity)
     return value if BASE <= value < BASE + IMG_SIZE else 0
 
-def looks_like_pawn(value, es_value, health_off, max_health_off, controller_off):
-    """client-vtable entity with plausible health and a controller handle
-    that resolves to an entity of the same class"""
+def looks_like_pawn(value, es_value, health_off, max_health_off,
+                    controller_off, pawn_handle_off):
+    """client-vtable entity with plausible health whose controller handle
+    resolves to a controller whose m_hPawn points back at this pawn"""
     if not is_heap_ptr(value):
         return False
     if not (BASE <= live_u64(value) < BASE + IMG_SIZE):
         return False
     max_hp = struct.unpack("<i", struct.pack("<I", live_u32(value + max_health_off)))[0]
     hp = struct.unpack("<i", struct.pack("<I", live_u32(value + health_off)))[0]
-    if not (100 <= max_hp <= 100000 and 0 < hp <= max_hp):
+    # bonus health from buffs can push current health past the base max field
+    if not (100 <= max_hp <= 100000 and 0 < hp <= 100000):
         return False
     controller = resolve_entity(live_u32(value + controller_off), es_value)
-    return bool(controller) and vtable_of(controller) == live_u64(value)
+    if not controller:
+        return False
+    back = resolve_entity(live_u32(controller + pawn_handle_off), es_value)
+    return back == value
 
-def discover_pawn_global(es_value, health_off, max_health_off, controller_off):
+def discover_pawn_global(es_value, health_off, max_health_off,
+                         controller_off, pawn_handle_off):
     entities = set()
     for chunk_i in range(8):
         chunk = live_u64(es_value + 0x10 + chunk_i * 8)
@@ -231,7 +237,8 @@ def discover_pawn_global(es_value, health_off, max_health_off, controller_off):
         for off in range(start, start + size - 8, 8):
             value = struct.unpack_from("<Q", image, off)[0]
             if value in entities and looks_like_pawn(
-                    value, es_value, health_off, max_health_off, controller_off):
+                    value, es_value, health_off, max_health_off,
+                    controller_off, pawn_handle_off):
                 matches.append((off, value))
     return matches
 
@@ -345,6 +352,8 @@ pawn_fields = fields["pawn"]
 health_off = pawn_fields["health"]["offset"] if pawn_fields["health"] else 0x354
 max_health_off = pawn_fields["max_health"]["offset"] if pawn_fields["max_health"] else 0x350
 controller_off = pawn_fields["controller_handle"]["offset"] if pawn_fields["controller_handle"] else 0x1050
+pawn_handle_off = (fields["controller"]["pawn_handle"]["offset"]
+                   if fields["controller"]["pawn_handle"] else 0x6BC)
 
 PAWN_GLOBAL = KNOWN_PAWN_GLOBAL
 if es_matches:
@@ -357,11 +366,13 @@ if es_matches:
     ES_GLOBAL = es_offset
 
     known_value = live_u64(BASE + KNOWN_PAWN_GLOBAL)
-    if looks_like_pawn(known_value, es_value, health_off, max_health_off, controller_off):
+    if looks_like_pawn(known_value, es_value, health_off, max_health_off,
+                       controller_off, pawn_handle_off):
         print(f"# known pawn global client+0x{KNOWN_PAWN_GLOBAL:X} validated in place",
               file=sys.stderr)
     else:
-        pawn_matches = discover_pawn_global(es_value, health_off, max_health_off, controller_off)
+        pawn_matches = discover_pawn_global(es_value, health_off, max_health_off,
+                                            controller_off, pawn_handle_off)
         if pawn_matches:
             PAWN_GLOBAL = pawn_matches[0][0]
             others = ", ".join(f"client+0x{off:X}" for off, _ in pawn_matches[1:5])
