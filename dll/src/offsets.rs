@@ -89,7 +89,7 @@ impl Default for Offsets {
             dll_port: DEFAULT_DLL_PORT,
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
             local_pawn_global: 0x32c5958,
-            entity_system_global: 0x34747b0,
+            entity_system_global: 0x3474730,
             entity_chunk_array: 0x10,
             entity_chunk_size: 512,
             entity_stride: 0x70,

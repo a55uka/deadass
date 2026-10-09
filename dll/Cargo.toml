@@ -10,10 +10,10 @@ crate-type = ["cdylib", "rlib"]
 deadass-shared = { path = "../shared" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
