@@ -180,8 +180,7 @@ pub struct StatusView {
 #[derive(serde::Serialize, Clone)]
 pub struct UpdateStatusView {
     checks_enabled: bool,
-    latest_version: Option<String>,
-    available: Option<String>,
+    updated: Option<u64>,
 }
 
 pub async fn snapshot(backend: &Backend) -> StatusView {
@@ -211,8 +210,7 @@ pub async fn snapshot(backend: &Backend) -> StatusView {
         app_version: updater::CURRENT_VERSION.to_string(),
         update: UpdateStatusView {
             checks_enabled: state.config.updates.enabled,
-            latest_version: state.updates.latest_version.clone(),
-            available: state.updates.available.clone(),
+            updated: state.updates.updated,
         },
     }
 }

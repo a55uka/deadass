@@ -99,7 +99,6 @@ pub fn start(config: AppConfig) -> Pipeline {
         state.clone(),
         injector::resolve_dll_path(&config),
     );
-    apply_staged_updates(&state);
     spawn_toy_autoconnect(hub.clone(), state.clone());
     let openshock = Arc::new(OpenShockClient::new());
     tokio::spawn(dispatch::run(
@@ -117,18 +116,6 @@ pub fn start(config: AppConfig) -> Pipeline {
         source: gate,
         config_path: default_config_path(),
         openshock,
-    }
-}
-
-fn apply_staged_updates(state: &Arc<Mutex<AppState>>) {
-    let applied = updater::apply_staged(&updater::app_dir());
-    if applied.is_empty() {
-        return;
-    }
-    let line = format!("applied staged updates: {}", applied.join(", "));
-    tracing::info!("{line}");
-    if let Ok(mut locked) = state.try_lock() {
-        locked.push_log(line);
     }
 }
 

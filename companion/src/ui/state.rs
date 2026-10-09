@@ -120,8 +120,8 @@ impl ToyStatus {
 #[derive(Debug, Clone, Default)]
 pub struct UpdateStatus {
     pub checked: bool,
-    pub latest_version: Option<String>,
-    pub available: Option<String>,
+    /// epoch milliseconds of the last time the offsets toml changed on disk
+    pub updated: Option<u64>,
 }
 
 #[derive(Debug, Clone)]

@@ -104,7 +104,6 @@ impl Default for AppConfig {
 pub struct UpdateConfig {
     pub enabled: bool,
     pub repo: String,
-    pub auto_update_offsets: bool,
 }
 
 impl Default for UpdateConfig {
@@ -112,7 +111,6 @@ impl Default for UpdateConfig {
         Self {
             enabled: true,
             repo: String::from("a55uka/deadass"),
-            auto_update_offsets: true,
         }
     }
 }

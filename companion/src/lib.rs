@@ -28,4 +28,4 @@ pub use openshock::{ControlCommand, OpenShockClient};
 pub use pipeline::{Pipeline, SourceGate, disconnect, load_config, set_source, start};
 pub use toys::{ConnectionMode, ToyDevice, ToyError, ToyHub};
 pub use transport::{EventBus, EventIngress, EventOutlet};
-pub use updater::{GitHubClient, UpdateCheck, apply_staged};
+pub use updater::{app_dir, spawn_checks};

@@ -113,22 +113,16 @@ export function renderConfig() {
 
 export function renderUpdates() {
   const update = status()?.update ?? {};
-  const available = update.available;
-  const latest = update.latest_version;
-
   els.updCurrent.textContent = `v${status()?.app_version ?? "?"}`;
-  els.updLatest.textContent = latest ? `v${latest}` : "not checked";
-  els.updStatus.textContent = available
-    ? `update available: v${available}`
-    : latest
-      ? "up to date"
-      : "not checked";
+  els.updStatus.textContent = !update.checks_enabled
+    ? "sync off"
+    : update.updated
+      ? `updated ${new Date(update.updated).toLocaleString()}`
+      : "synced";
 
   const lines = [];
-  if (available) {
-    lines.push(`Update available: v${available} — restart deadass to apply a staged update.`);
-  } else if (latest) {
-    lines.push(`Up to date (v${status()?.app_version ?? "?"}).`);
+  if (update.updated) {
+    lines.push(`Offsets updated ${new Date(update.updated).toLocaleString()} — restart Deadlock to load them.`);
   }
   els.homeUpdate.hidden = lines.length === 0;
   els.homeUpdateText.textContent = lines.join(" ");
@@ -170,7 +164,5 @@ export function bindSettings() {
   });
   els.btnOsTest.addEventListener("click", () => run("test_openshock", {}, [els.btnOsTest]));
 
-  els.btnUpdCheck.addEventListener("click", () => run("check_updates", {}, [els.btnUpdCheck]));
   els.btnUpdOffsets.addEventListener("click", () => run("update_offsets_now", {}, [els.btnUpdOffsets]));
-  els.btnUpdApp.addEventListener("click", () => run("update_app_now", {}, [els.btnUpdApp]));
 }

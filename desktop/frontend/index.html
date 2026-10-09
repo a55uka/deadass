@@ -220,24 +220,18 @@
               <output class="mono field-value" id="upd-current">—</output>
             </div>
             <div class="field">
-              <span class="field-label">Latest release</span>
-              <output class="mono field-value" id="upd-latest">—</output>
-            </div>
-            <div class="field">
-              <span class="field-label">Status</span>
+              <span class="field-label">Offsets</span>
               <output class="mono field-value" id="upd-status">not checked</output>
             </div>
           </div>
           <div class="field-row">
-            <button class="btn" id="btn-upd-check" type="button">Check for updates</button>
-            <button class="btn" id="btn-upd-offsets" type="button">Update offsets</button>
-            <button class="btn" id="btn-upd-app" type="button">Update app</button>
+            <button class="btn" id="btn-upd-offsets" type="button">Sync offsets now</button>
           </div>
           <p class="muted sub-note">
-            "Update offsets" fetches the current schema toml from the latest
-            release and applies it immediately (takes effect on the next game
-            launch). "Update app" stages new binaries; restart deadass to
-            apply. Checks also run automatically in the background.
+            "Sync offsets now" fetches deadass-offsets.toml from the project's
+            GitHub main branch and applies it immediately (takes effect on the
+            next game launch). The same sync runs automatically in the
+            background. The app itself is never updated by this.
           </p>
         </div>
 

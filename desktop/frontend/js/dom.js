@@ -48,11 +48,8 @@ export const els = {
   btnLogCopy: document.getElementById("btn-log-copy"),
   btnLogBottom: document.getElementById("btn-log-bottom"),
   updCurrent: document.getElementById("upd-current"),
-  updLatest: document.getElementById("upd-latest"),
   updStatus: document.getElementById("upd-status"),
-  btnUpdCheck: document.getElementById("btn-upd-check"),
   btnUpdOffsets: document.getElementById("btn-upd-offsets"),
-  btnUpdApp: document.getElementById("btn-upd-app"),
 };
 
 export const pending = new Set();
