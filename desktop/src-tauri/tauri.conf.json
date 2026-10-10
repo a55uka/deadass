@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/config-schema.json",
   "productName": "Deadass Companion",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "identifier": "app.deadass.desktop",
   "build": {
     "frontendDist": "../frontend",
