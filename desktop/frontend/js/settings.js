@@ -103,6 +103,7 @@ export function renderConfig() {
   setValue(els.cfgOsEnabled, () => { els.cfgOsEnabled.checked = cfg.openshock_enabled; });
   setValue(els.cfgOsToken, () => { els.cfgOsToken.value = cfg.openshock_api_token; });
   setValue(els.cfgOsBaseUrl, () => { els.cfgOsBaseUrl.value = cfg.openshock_base_url; });
+  setValue(els.cfgSyncOffsets, () => { els.cfgSyncOffsets.checked = cfg.sync_offsets; });
   els.cfgOsState.textContent = osStateText();
   renderRoster();
   refreshOsHint();
@@ -147,6 +148,7 @@ export function bindSettings() {
   els.cfgOsEnabled.addEventListener("change", () => run("set_config", { openshock_enabled: els.cfgOsEnabled.checked }, [els.cfgOsEnabled]));
   els.cfgOsToken.addEventListener("change", () => run("set_config", { openshock_api_token: els.cfgOsToken.value }, [els.cfgOsToken]));
   els.cfgOsBaseUrl.addEventListener("change", () => run("set_config", { openshock_base_url: els.cfgOsBaseUrl.value }, [els.cfgOsBaseUrl]));
+  els.cfgSyncOffsets.addEventListener("change", () => run("set_config", { sync_offsets: els.cfgSyncOffsets.checked }, [els.cfgSyncOffsets]));
 
   els.btnOsAdd.addEventListener("click", () => {
     roster.push({ id: "", name: "" });

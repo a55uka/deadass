@@ -100,7 +100,7 @@ pub fn spawn_checks(state: Arc<Mutex<AppState>>) {
 async fn run_checks(state: Arc<Mutex<AppState>>) {
     loop {
         let config = state.lock().await.config.clone();
-        if config.updates.enabled
+        if config.updates.sync_offsets
             && let Err(error) = run_check_cycle(&state, &config).await
         {
             let line = format!("offsets sync failed: {error}");

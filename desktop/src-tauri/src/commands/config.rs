@@ -105,6 +105,7 @@ pub async fn set_config(
     openshock_api_token: Option<String>,
     openshock_base_url: Option<String>,
     openshock_shockers: Option<Vec<ShockerArgs>>,
+    sync_offsets: Option<bool>,
 ) -> Result<StatusView, String> {
     let mut central_url: Option<String> = None;
     pipeline::edit_config(&backend, |config: &mut AppConfig| {
@@ -153,6 +154,9 @@ pub async fn set_config(
         if let Some(path) = dll_path {
             let path = path.trim();
             config.dll_path = (!path.is_empty()).then(|| path.to_string());
+        }
+        if let Some(sync) = sync_offsets {
+            config.updates.sync_offsets = sync;
         }
     })
     .await;

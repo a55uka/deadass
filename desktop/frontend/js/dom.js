@@ -50,6 +50,7 @@ export const els = {
   updCurrent: document.getElementById("upd-current"),
   updStatus: document.getElementById("upd-status"),
   btnUpdOffsets: document.getElementById("btn-upd-offsets"),
+  cfgSyncOffsets: document.getElementById("cfg-sync-offsets"),
 };
 
 export const pending = new Set();

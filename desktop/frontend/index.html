@@ -227,6 +227,13 @@
           <div class="field-row">
             <button class="btn" id="btn-upd-offsets" type="button">Sync offsets now</button>
           </div>
+          <div class="toggle-row">
+            <div>
+              <label class="toggle-label" for="cfg-sync-offsets">Auto-sync offsets from GitHub</label>
+              <p class="muted sub-note">Off = the local deadass-offsets.toml is never overwritten automatically; syncing only happens when you press "Sync offsets now".</p>
+            </div>
+            <label class="switch"><input type="checkbox" id="cfg-sync-offsets" /><span class="track"></span></label>
+          </div>
           <p class="muted sub-note">
             "Sync offsets now" fetches deadass-offsets.toml from the project's
             GitHub main branch and applies it immediately (takes effect on the

@@ -88,8 +88,8 @@ impl Default for Offsets {
         Self {
             dll_port: DEFAULT_DLL_PORT,
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            local_pawn_global: 0x32c5958,
-            entity_system_global: 0x3474730,
+            local_pawn_global: 0x33170d8,
+            entity_system_global: 0x34c8030,
             entity_chunk_array: 0x10,
             entity_chunk_size: 512,
             entity_stride: 0x70,
@@ -477,8 +477,8 @@ mod tests {
             .overlay(
                 r#"
                 [globals]
-                local_pawn = "0x32c5958"
-                entity_system = "0x34747b0"
+                local_pawn = "0x33170d8"
+                entity_system = "0x34c8030"
 
                 [entity_list]
                 chunk_array = "0x10"
@@ -521,8 +521,8 @@ mod tests {
                 "#,
             )
             .expect("full extractor file parses");
-        assert_eq!(offsets.local_pawn_global, 0x32c5958);
-        assert_eq!(offsets.entity_system_global, 0x34747b0);
+        assert_eq!(offsets.local_pawn_global, 0x33170d8);
+        assert_eq!(offsets.entity_system_global, 0x34c8030);
         assert_eq!(offsets.entity_stride, 0x70);
         assert_eq!(offsets.pawn_health, 0x354);
         assert_eq!(offsets.pawn_team, 0x3EF);

@@ -124,6 +124,7 @@ pub struct ConfigView {
     openshock_base_url: String,
     openshock_shockers: Vec<ShockerView>,
     openshock_ready: bool,
+    sync_offsets: bool,
 }
 
 impl ConfigView {
@@ -150,6 +151,7 @@ impl ConfigView {
                 })
                 .collect(),
             openshock_ready: OpenShockClient::configured(&config.openshock),
+            sync_offsets: config.updates.sync_offsets,
         }
     }
 }
@@ -209,7 +211,7 @@ pub async fn snapshot(backend: &Backend) -> StatusView {
         config_path: backend.config_path.display().to_string(),
         app_version: updater::CURRENT_VERSION.to_string(),
         update: UpdateStatusView {
-            checks_enabled: state.config.updates.enabled,
+            checks_enabled: state.config.updates.sync_offsets,
             updated: state.updates.updated,
         },
     }

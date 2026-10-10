@@ -102,14 +102,21 @@ impl Default for AppConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpdateConfig {
-    pub enabled: bool,
+    /// When false, the companion never auto-overwrites the local offsets
+    /// toml from GitHub; syncing then only happens via the explicit button.
+    #[serde(default = "default_true", alias = "enabled")]
+    pub sync_offsets: bool,
     pub repo: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            sync_offsets: true,
             repo: String::from("a55uka/deadass"),
         }
     }
