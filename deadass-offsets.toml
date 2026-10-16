@@ -8,8 +8,8 @@ port = 24680
 poll_interval_ms = 33
 
 [globals]
-local_pawn = "0x3360f58"
-entity_system = "0x3d0dfc0"
+local_pawn = "0x3400258"
+entity_system = "0x35b7250"
 
 [entity_list]
 chunk_array = "0x10"
@@ -23,10 +23,10 @@ life_state = "0x35c"
 team = "0x3ef"
 sim_time = "0x3c0"
 controller_handle = "0x1050"
-ability_component = "0x1450"
-abilities = "0x14b8"
-interrupt_state = "0x1534"
-damage_taken_time = "0x1400"
+ability_component = "0x1448"
+abilities = "0x14b0"
+interrupt_state = "0x152c"
+damage_taken_time = "0x13f8"
 
 [ability]
 channeling = "0x748"
