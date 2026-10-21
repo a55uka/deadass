@@ -8,8 +8,8 @@ port = 24680
 poll_interval_ms = 33
 
 [globals]
-local_pawn = "0x3400258"
-entity_system = "0x35b7250"
+local_pawn = "0x3438378"
+entity_system = "0x35f1530"
 
 [entity_list]
 chunk_array = "0x10"
@@ -32,10 +32,10 @@ damage_taken_time = "0x13f8"
 channeling = "0x748"
 cooldown_start = "0x768"
 cooldown_end = "0x76c"
-slot = "0x77c"
-charges = "0x784"
-parry_success_end = "0x16e4"
-melee_state = "0x1850"
+slot = "0x784"
+charges = "0x78c"
+parry_success_end = "0x16ec"
+melee_state = "0x1858"
 melee_slot = 22
 max_slot = 22
 

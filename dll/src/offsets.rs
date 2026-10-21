@@ -88,8 +88,8 @@ impl Default for Offsets {
         Self {
             dll_port: DEFAULT_DLL_PORT,
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            local_pawn_global: 0x3400258,
-            entity_system_global: 0x35b7250,
+            local_pawn_global: 0x3438378,
+            entity_system_global: 0x35f1530,
             entity_chunk_array: 0x10,
             entity_chunk_size: 512,
             entity_stride: 0x70,
@@ -107,9 +107,9 @@ impl Default for Offsets {
             ability_cooldown_start: 0x768,
             ability_cooldown_end: 0x76C,
             ability_slot: 0x77C,
-            ability_charges: 0x784,
-            ability_parry_success_end: 0x16E4,
-            ability_melee_state: 0x1850,
+            ability_charges: 0x78C,
+            ability_parry_success_end: 0x16EC,
+            ability_melee_state: 0x1858,
             melee_slot: 22,
             max_ability_slot: 22,
             schema_resolved: false,
@@ -477,8 +477,8 @@ mod tests {
             .overlay(
                 r#"
                 [globals]
-                local_pawn = "0x3400258"
-                entity_system = "0x35b7250"
+                local_pawn = "0x3438378"
+                entity_system = "0x35f1530"
 
                 [entity_list]
                 chunk_array = "0x10"
@@ -502,9 +502,9 @@ mod tests {
                 cooldown_start = "0x768"
                 cooldown_end = "0x76c"
                 slot = "0x77c"
-                charges = "0x784"
-                parry_success_end = "0x16e4"
-                melee_state = "0x1850"
+                charges = "0x78c"
+                parry_success_end = "0x16ec"
+                melee_state = "0x1858"
                 melee_slot = 22
                 max_slot = 22
 
@@ -521,8 +521,8 @@ mod tests {
                 "#,
             )
             .expect("full extractor file parses");
-        assert_eq!(offsets.local_pawn_global, 0x3400258);
-        assert_eq!(offsets.entity_system_global, 0x35b7250);
+        assert_eq!(offsets.local_pawn_global, 0x3438378);
+        assert_eq!(offsets.entity_system_global, 0x35f1530);
         assert_eq!(offsets.entity_stride, 0x70);
         assert_eq!(offsets.pawn_health, 0x354);
         assert_eq!(offsets.pawn_team, 0x3EF);
@@ -534,9 +534,9 @@ mod tests {
         assert_eq!(offsets.ability_channeling, 0x748);
         assert_eq!(offsets.ability_cooldown_end, 0x76C);
         assert_eq!(offsets.ability_slot, 0x77C);
-        assert_eq!(offsets.ability_charges, 0x784);
-        assert_eq!(offsets.ability_parry_success_end, 0x16E4);
-        assert_eq!(offsets.ability_melee_state, 0x1850);
+        assert_eq!(offsets.ability_charges, 0x78C);
+        assert_eq!(offsets.ability_parry_success_end, 0x16EC);
+        assert_eq!(offsets.ability_melee_state, 0x1858);
         assert_eq!(offsets.melee_slot, 22);
         assert_eq!(offsets.max_ability_slot, 22);
         assert_eq!(offsets.controller_player_data, 0x908);
