@@ -8,8 +8,8 @@ port = 24680
 poll_interval_ms = 33
 
 [globals]
-local_pawn = "0x3438378"
-entity_system = "0x35f1530"
+local_pawn = "0x3439378"
+entity_system = "0x35f2530"
 
 [entity_list]
 chunk_array = "0x10"
