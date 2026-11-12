@@ -38,29 +38,41 @@ psapi.GetModuleFileNameExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.
 
 # Fallbacks used only when auto-discovery cannot run (e.g. pawn discovery
 # needs a live match). Update after a fresh dump if you skip discovery.
-KNOWN_PAWN_GLOBAL = 0x3482f48
-KNOWN_ES_GLOBAL = 0x3e9c9e8
+KNOWN_PAWN_GLOBAL = 0x3478fc8
+KNOWN_ES_GLOBAL = 0x3e92a68
 
 out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq deadlock.exe", "/FO", "CSV"], capture_output=True, text=True).stdout
-lines = [l for l in out.splitlines() if "deadlock" in l.lower()]
-if not lines:
+pids = [int(line.split('","')[1]) for line in out.splitlines() if "deadlock" in line.lower()]
+if not pids:
     sys.exit("deadlock.exe is not running")
-pid = int(lines[0].split('","')[1])
-process = k32.OpenProcess(0x0410, False, pid)
-needed = wt.DWORD(0)
-psapi.EnumProcessModulesEx(process, None, 0, ctypes.byref(needed), 0x03)
-mods = (ctypes.c_void_p * (needed.value // 8))()
-psapi.EnumProcessModulesEx(process, mods, needed.value, ctypes.byref(needed), 0x03)
-MODULE_BASES = []
+
+# several deadlock.exe processes can exist (launcher/loader + the game);
+# attach to the one that actually has client.dll mapped
+process = None
+pid = None
 BASE = None
-for mod in mods:
-    name = ctypes.create_unicode_buffer(512)
-    psapi.GetModuleFileNameExW(process, mod, name, 512)
-    MODULE_BASES.append(ctypes.cast(mod, ctypes.c_void_p).value)
-    if name.value.lower().endswith("\\client.dll"):
-        BASE = ctypes.cast(mod, ctypes.c_void_p).value
-if BASE is None:
-    sys.exit("client.dll not loaded yet")
+MODULE_BASES = []
+for candidate in pids:
+    handle = k32.OpenProcess(0x0410, False, candidate)
+    if not handle:
+        continue
+    needed = wt.DWORD(0)
+    psapi.EnumProcessModulesEx(handle, None, 0, ctypes.byref(needed), 0x03)
+    mods = (ctypes.c_void_p * (needed.value // 8))()
+    psapi.EnumProcessModulesEx(handle, mods, needed.value, ctypes.byref(needed), 0x03)
+    bases = []
+    base = None
+    for mod in mods:
+        name = ctypes.create_unicode_buffer(512)
+        psapi.GetModuleFileNameExW(handle, mod, name, 512)
+        bases.append(ctypes.cast(mod, ctypes.c_void_p).value)
+        if name.value.lower().endswith("\\client.dll"):
+            base = ctypes.cast(mod, ctypes.c_void_p).value
+    if base is not None:
+        process, pid, BASE, MODULE_BASES = handle, candidate, base, bases
+        break
+if process is None:
+    sys.exit(f"no deadlock.exe process (of {len(pids)}) has client.dll loaded yet")
 
 def read(addr, size):
     buf = ctypes.create_string_buffer(size)
