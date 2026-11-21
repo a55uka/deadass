@@ -17,101 +17,281 @@ signature — no dezlock dump needed:
     menu the last known value is kept.
 
 Usage (game running, from the deadass repo root):
-    python scripts/schema_extract.py > target/release/deadass-offsets.toml
+    python scripts/schema_extract.py > deadass-offsets.toml
+Works on Windows and on Linux under Proton (reads /proc/<pid>/mem; needs
+kernel.yama.ptrace_scope=0 or root). --pid picks the process explicitly.
+Fields only, no game running (globals keep the KNOWN_* fallbacks):
+    python scripts/schema_extract.py --static <Deadlock>/game/citadel/bin/win64/client.dll
 Field candidates and discovery notes go to stderr.
 """
 
-import ctypes, ctypes.wintypes as wt, struct, subprocess, sys
-
-k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-k32.OpenProcess.restype = ctypes.c_void_p
-k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
-k32.ReadProcessMemory.restype = wt.BOOL
-k32.ReadProcessMemory.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
-k32.VirtualQueryEx.restype = ctypes.c_size_t
-k32.VirtualQueryEx.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
-psapi = ctypes.WinDLL("psapi")
-psapi.EnumProcessModulesEx.restype = wt.BOOL
-psapi.EnumProcessModulesEx.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), wt.DWORD, ctypes.POINTER(wt.DWORD), wt.DWORD]
-psapi.GetModuleFileNameExW.restype = wt.DWORD
-psapi.GetModuleFileNameExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, wt.DWORD]
+import argparse, bisect, os, struct, subprocess, sys
 
 # Fallbacks used only when auto-discovery cannot run (e.g. pawn discovery
 # needs a live match). Update after a fresh dump if you skip discovery.
-KNOWN_PAWN_GLOBAL = 0x3478fc8
-KNOWN_ES_GLOBAL = 0x3e92a68
+KNOWN_PAWN_GLOBAL = 0x3477fc8
+KNOWN_ES_GLOBAL = 0x3e91a68
 
-out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq deadlock.exe", "/FO", "CSV"], capture_output=True, text=True).stdout
-pids = [int(line.split('","')[1]) for line in out.splitlines() if "deadlock" in line.lower()]
-if not pids:
-    sys.exit("deadlock.exe is not running")
+parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+parser.add_argument("--static", metavar="CLIENT_DLL",
+                    help="read field offsets from a client.dll on disk instead of the live "
+                         "game; globals cannot be discovered and keep the KNOWN_* values")
+parser.add_argument("--pid", type=int, help="attach to this process id (Linux/Proton)")
+ARGS = parser.parse_args()
 
-# several deadlock.exe processes can exist (launcher/loader + the game);
-# attach to the one that actually has client.dll mapped
-process = None
-pid = None
-BASE = None
-MODULE_BASES = []
-for candidate in pids:
-    handle = k32.OpenProcess(0x0410, False, candidate)
-    if not handle:
-        continue
-    needed = wt.DWORD(0)
-    psapi.EnumProcessModulesEx(handle, None, 0, ctypes.byref(needed), 0x03)
-    mods = (ctypes.c_void_p * (needed.value // 8))()
-    psapi.EnumProcessModulesEx(handle, mods, needed.value, ctypes.byref(needed), 0x03)
+
+# ---- process backends: each sets PID, BASE, MODULE_RANGES, read(), committed() ----
+
+def windows_backend():
+    import ctypes, ctypes.wintypes as wt
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+    k32.ReadProcessMemory.restype = wt.BOOL
+    k32.ReadProcessMemory.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+    k32.VirtualQueryEx.restype = ctypes.c_size_t
+    k32.VirtualQueryEx.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+    psapi = ctypes.WinDLL("psapi")
+    psapi.EnumProcessModulesEx.restype = wt.BOOL
+    psapi.EnumProcessModulesEx.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), wt.DWORD, ctypes.POINTER(wt.DWORD), wt.DWORD]
+    psapi.GetModuleFileNameExW.restype = wt.DWORD
+    psapi.GetModuleFileNameExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, wt.DWORD]
+
+    if ARGS.pid:
+        pids = [ARGS.pid]
+    else:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq deadlock.exe", "/FO", "CSV"], capture_output=True, text=True).stdout
+        pids = [int(line.split('","')[1]) for line in out.splitlines() if "deadlock" in line.lower()]
+    if not pids:
+        sys.exit("deadlock.exe is not running")
+
+    # several deadlock.exe processes can exist (launcher/loader + the game);
+    # attach to the one that actually has client.dll mapped
+    process = pid = base_found = None
     bases = []
-    base = None
-    for mod in mods:
-        name = ctypes.create_unicode_buffer(512)
-        psapi.GetModuleFileNameExW(handle, mod, name, 512)
-        bases.append(ctypes.cast(mod, ctypes.c_void_p).value)
-        if name.value.lower().endswith("\\client.dll"):
-            base = ctypes.cast(mod, ctypes.c_void_p).value
-    if base is not None:
-        process, pid, BASE, MODULE_BASES = handle, candidate, base, bases
-        break
-if process is None:
-    sys.exit(f"no deadlock.exe process (of {len(pids)}) has client.dll loaded yet")
+    for candidate in pids:
+        handle = k32.OpenProcess(0x0410, False, candidate)
+        if not handle:
+            continue
+        needed = wt.DWORD(0)
+        psapi.EnumProcessModulesEx(handle, None, 0, ctypes.byref(needed), 0x03)
+        mods = (ctypes.c_void_p * (needed.value // 8))()
+        psapi.EnumProcessModulesEx(handle, mods, needed.value, ctypes.byref(needed), 0x03)
+        these = []
+        base = None
+        for mod in mods:
+            name = ctypes.create_unicode_buffer(512)
+            psapi.GetModuleFileNameExW(handle, mod, name, 512)
+            these.append(ctypes.cast(mod, ctypes.c_void_p).value)
+            if name.value.lower().endswith("\\client.dll"):
+                base = ctypes.cast(mod, ctypes.c_void_p).value
+        if base is not None:
+            process, pid, base_found, bases = handle, candidate, base, these
+            break
+    if process is None:
+        sys.exit(f"no deadlock.exe process (of {len(pids)}) has client.dll loaded yet")
 
-def read(addr, size):
-    buf = ctypes.create_string_buffer(size)
-    got = ctypes.c_size_t(0)
-    if not addr or not k32.ReadProcessMemory(process, ctypes.c_void_p(addr), buf, size, ctypes.byref(got)):
-        return None
-    return buf.raw[:got.value]
+    def read(addr, size):
+        buf = ctypes.create_string_buffer(size)
+        got = ctypes.c_size_t(0)
+        if not addr or not k32.ReadProcessMemory(process, ctypes.c_void_p(addr), buf, size, ctypes.byref(got)):
+            return None
+        return buf.raw[:got.value]
 
-class MBI(ctypes.Structure):
-    _fields_ = [("BaseAddress", ctypes.c_void_p), ("AllocationBase", ctypes.c_void_p),
-                ("AllocationProtect", wt.DWORD), ("PartitionId", wt.DWORD),
-                ("RegionSize", ctypes.c_size_t), ("State", wt.DWORD),
-                ("Protect", wt.DWORD), ("Type", wt.DWORD)]
+    class MBI(ctypes.Structure):
+        _fields_ = [("BaseAddress", ctypes.c_void_p), ("AllocationBase", ctypes.c_void_p),
+                    ("AllocationProtect", wt.DWORD), ("PartitionId", wt.DWORD),
+                    ("RegionSize", ctypes.c_size_t), ("State", wt.DWORD),
+                    ("Protect", wt.DWORD), ("Type", wt.DWORD)]
 
-def committed(addr):
-    mbi = MBI()
-    return bool(k32.VirtualQueryEx(process, ctypes.c_void_p(addr), ctypes.byref(mbi), ctypes.sizeof(mbi))) and mbi.State == 0x1000
+    def committed(addr):
+        mbi = MBI()
+        return bool(k32.VirtualQueryEx(process, ctypes.c_void_p(addr), ctypes.byref(mbi), ctypes.sizeof(mbi))) and mbi.State == 0x1000
+
+    # generous 128MB span per module; exact PE sizes are not needed here
+    ranges = [(b, b + 0x8000000) for b in bases]
+    return pid, base_found, ranges, read, committed
+
+
+def linux_backend():
+    """Deadlock under Proton/Wine: the game is a normal Linux process whose
+    /proc/<pid>/maps lists client.dll; memory is read through /proc/<pid>/mem
+    (needs kernel.yama.ptrace_scope=0, or run as root)."""
+    def maps_of(pid):
+        regions = []
+        try:
+            with open(f"/proc/{pid}/maps") as handle:
+                for line in handle:
+                    parts = line.split(maxsplit=5)
+                    lo, hi = (int(x, 16) for x in parts[0].split("-"))
+                    path = parts[5].strip() if len(parts) > 5 else ""
+                    regions.append((lo, hi, parts[1], path))
+        except OSError:
+            return None
+        return regions
+
+    if ARGS.pid:
+        pids = [ARGS.pid]
+    else:
+        pids = []
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as handle:
+                    cmdline = handle.read().lower()
+            except OSError:
+                continue
+            if b"deadlock.exe" in cmdline:
+                pids.append(int(entry))
+    if not pids:
+        sys.exit("deadlock.exe is not running (no process with deadlock.exe in its cmdline)")
+
+    pid = regions = client_path = None
+    for candidate in pids:
+        maps = maps_of(candidate)
+        if not maps:
+            continue
+        hit = next((path for _, _, _, path in maps if path.lower().endswith("/client.dll")), None)
+        if hit:
+            pid, regions, client_path = candidate, maps, hit
+            break
+    if pid is None:
+        sys.exit(f"no deadlock.exe process (of {len(pids)}) has client.dll mapped yet")
+
+    try:
+        mem = open(f"/proc/{pid}/mem", "rb", buffering=0)
+    except PermissionError:
+        sys.exit(f"cannot open /proc/{pid}/mem: set kernel.yama.ptrace_scope=0 "
+                 "(sudo sysctl kernel.yama.ptrace_scope=0) or run as root")
+
+    def read(addr, size):
+        if not addr:
+            return None
+        try:
+            data = os.pread(mem.fileno(), size, addr)
+        except OSError:
+            return None
+        return data or None
+
+    starts = [lo for lo, _, _, _ in regions]
+
+    def committed(addr):
+        i = bisect.bisect_right(starts, addr) - 1
+        return i >= 0 and addr < regions[i][1] and regions[i][2][0] == "r"
+
+    # PE modules: lowest mapping of each .dll/.exe is its image base; the
+    # extent comes from SizeOfImage in that image's own header
+    module_bases = {}
+    for lo, _, _, path in regions:
+        if path.lower().endswith((".dll", ".exe")):
+            module_bases[path] = min(lo, module_bases.get(path, lo))
+    ranges = []
+    for path, base in module_bases.items():
+        head = read(base, 0x400)
+        if head and head[:2] == b"MZ":
+            lfanew = struct.unpack_from("<I", head, 0x3C)[0]
+            if lfanew + 0x54 <= len(head):
+                ranges.append((base, base + struct.unpack_from("<I", head, lfanew + 0x50)[0]))
+                continue
+        ranges.append((base, base + 0x8000000))
+
+    base = module_bases[client_path]
+
+    # read() the whole image in one go fails if any page inside is
+    # unreadable; wrap it so a big read falls back to page-sized pieces
+    raw_read = read
+
+    def read_resilient(addr, size):
+        data = raw_read(addr, size)
+        if data is not None and len(data) == size or size <= 0x1000:
+            return data
+        out = bytearray()
+        pos = addr
+        while pos < addr + size:
+            step = min(0x100000, addr + size - pos)
+            chunk = raw_read(pos, step)
+            if chunk is None or len(chunk) < step:
+                pieces = bytearray()
+                for page in range(pos, pos + step, 0x1000):
+                    got = raw_read(page, min(0x1000, pos + step - page))
+                    pieces += got if got else b"\x00" * min(0x1000, pos + step - page)
+                chunk = bytes(pieces)
+            out += chunk
+            pos += step
+        return bytes(out)
+
+    return pid, base, ranges, read_resilient, committed
+
+
+def static_backend(path):
+    """Lay a client.dll from disk out at its preferred ImageBase. The
+    on-disk pointers already assume that base (relocations are not needed),
+    so the recv-table descriptor scan works unchanged."""
+    raw = open(path, "rb").read()
+    lfanew = struct.unpack_from("<I", raw, 0x3C)[0]
+    opt_size = struct.unpack_from("<H", raw, lfanew + 0x14)[0]
+    count = struct.unpack_from("<H", raw, lfanew + 6)[0]
+    image_base = struct.unpack_from("<Q", raw, lfanew + 0x18 + 0x18)[0]
+    size_of_image = struct.unpack_from("<I", raw, lfanew + 0x18 + 0x38)[0]
+    headers = struct.unpack_from("<I", raw, lfanew + 0x18 + 0x3C)[0]
+    mapped = bytearray(size_of_image)
+    mapped[:headers] = raw[:headers]
+    first = lfanew + 0x18 + opt_size
+    for i in range(count):
+        header = first + i * 0x28
+        vsize, vaddr, rsize, rptr = struct.unpack_from("<IIII", raw, header + 8)
+        length = min(rsize, vsize) if vsize else rsize
+        mapped[vaddr:vaddr + length] = raw[rptr:rptr + length]
+    mapped = bytes(mapped)
+
+    def read(addr, size):
+        rel = addr - image_base
+        if not addr or rel < 0 or rel >= len(mapped):
+            return None
+        return mapped[rel:rel + size]
+
+    def committed(addr):
+        return 0 <= addr - image_base < len(mapped)
+
+    return None, image_base, [(image_base, image_base + size_of_image)], read, committed
+
+
+if ARGS.static:
+    PID, BASE, MODULE_RANGES, read, committed = static_backend(ARGS.static)
+elif sys.platform == "win32":
+    PID, BASE, MODULE_RANGES, read, committed = windows_backend()
+else:
+    PID, BASE, MODULE_RANGES, read, committed = linux_backend()
+pid = PID
 
 def live_u64(addr):
     raw = read(addr, 8)
-    return struct.unpack("<Q", raw)[0] if raw else 0
+    return struct.unpack("<Q", raw)[0] if raw and len(raw) == 8 else 0
 
 def live_u32(addr):
     raw = read(addr, 4)
-    return struct.unpack("<I", raw)[0] if raw else 0
+    return struct.unpack("<I", raw)[0] if raw and len(raw) == 4 else 0
 
 def in_module(addr):
-    # generous 128MB span per module; exact PE sizes are not needed here
-    return any(base <= addr < base + 0x8000000 for base in MODULE_BASES)
+    return any(lo <= addr < hi for lo, hi in MODULE_RANGES)
+
+# Windows ASLR puts heap above 1TB; Wine/Proton hands out low heap
+# addresses as well, so accept any user-space address there
+HEAP_MIN = 0x10000000000 if sys.platform == "win32" else 0x10000
 
 def is_heap_ptr(value):
-    return 0x10000000000 <= value < 0x7FF000000000 and committed(value) and not in_module(value)
+    return HEAP_MIN <= value < 0x7FFFFFFFFFFF and committed(value) and not in_module(value)
 
 e_lfanew = struct.unpack("<I", read(BASE + 0x3C, 4))[0]
 IMG_SIZE = struct.unpack("<I", read(BASE + e_lfanew + 0x50, 4))[0]
 image = read(BASE, IMG_SIZE)
 if not image:
     sys.exit("cannot read client.dll image")
-print(f"# extracted from live deadlock.exe pid={pid}, client.dll+0x{BASE:X}", file=sys.stderr)
+if ARGS.static:
+    print(f"# extracted from {ARGS.static} (static, ImageBase 0x{BASE:X})", file=sys.stderr)
+else:
+    print(f"# extracted from live deadlock.exe pid={pid}, client.dll+0x{BASE:X}", file=sys.stderr)
 
 # ---- writable data sections of the image (global hunting ground) ----
 def data_sections():
@@ -129,6 +309,21 @@ def data_sections():
     return sections
 
 WRITABLE = data_sections()
+
+def string_section():
+    """read-only initialised data (.rdata): where field-name strings live"""
+    count = struct.unpack_from("<H", image, e_lfanew + 6)[0]
+    opt_size = struct.unpack_from("<H", image, e_lfanew + 0x14)[0]
+    first = e_lfanew + 0x18 + opt_size
+    for i in range(count):
+        header = first + i * 0x28
+        name = image[header:header + 8].rstrip(b"\x00")
+        vsize, vaddr = struct.unpack_from("<II", image, header + 8)
+        if name == b".rdata":
+            return vaddr, vaddr + vsize
+    return 0x2500000, 0x2C00000  # historical window
+
+RDATA_LO, RDATA_HI = string_section()
 
 # ---- global discovery ----
 def entity_system_looks_like(value):
@@ -187,7 +382,7 @@ def discover_entity_system():
     for name, start, size in WRITABLE:
         for off in range(start, start + size - 8, 8):
             value = struct.unpack_from("<Q", image, off)[0]
-            if 0x10000000000 <= value < 0x7FF000000000 and entity_system_looks_like(value):
+            if HEAP_MIN <= value < 0x7FFFFFFFFFFF and entity_system_looks_like(value):
                 candidates.append((off, value))
     verified = []
     for off, value in candidates:
@@ -273,7 +468,7 @@ def neighbors_of(site_pos, radius=0x400):
         v = struct.unpack_from("<Q", image, off)[0]
         if BASE <= v < BASE + IMG_SIZE:
             rel = v - BASE
-            if 0x2500000 < rel < 0x2C00000:
+            if RDATA_LO <= rel < RDATA_HI:
                 name = cstring_at(rel)
                 if name:
                     names.append(name)
@@ -359,7 +554,7 @@ for group, items in fields.items():
                   file=sys.stderr)
 
 # ---- globals: discover, fall back to known ----
-es_matches = discover_entity_system()
+es_matches = [] if ARGS.static else discover_entity_system()
 pawn_fields = fields["pawn"]
 health_off = pawn_fields["health"]["offset"] if pawn_fields["health"] else 0x354
 max_health_off = pawn_fields["max_health"]["offset"] if pawn_fields["max_health"] else 0x350
@@ -396,6 +591,9 @@ if es_matches:
             print(f"# pawn global not found (menu, or not spawned yet?); keeping known "
                   f"client+0x{KNOWN_PAWN_GLOBAL:X} — get into a match and re-run to confirm",
                   file=sys.stderr)
+elif ARGS.static:
+    ES_GLOBAL = KNOWN_ES_GLOBAL
+    print("# static mode: globals need the live game; keeping KNOWN_* values", file=sys.stderr)
 else:
     ES_GLOBAL = KNOWN_ES_GLOBAL
     print(f"# entity system NOT discovered (game still loading?); keeping known"
