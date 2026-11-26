@@ -29,8 +29,8 @@ import argparse, bisect, os, struct, subprocess, sys
 
 # Fallbacks used only when auto-discovery cannot run (e.g. pawn discovery
 # needs a live match). Update after a fresh dump if you skip discovery.
-KNOWN_PAWN_GLOBAL = 0x3477fc8
-KNOWN_ES_GLOBAL = 0x3e91a68
+KNOWN_PAWN_GLOBAL = 0x3496c48
+KNOWN_ES_GLOBAL = 0x3eb4b78
 
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 parser.add_argument("--static", metavar="CLIENT_DLL",
